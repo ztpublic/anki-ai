@@ -6,6 +6,8 @@
   - organize cards in batch
 - agentic flow
   - based on agent SDK like Claude Code SDK / Codex SDK
-  - dual models: plain text + multi-modal for picture cards  
+  - dual models: plain text + multi-modal for picture cards
+  - create interactive webview/html for card answer
+  - picture mask generation
 - scripts
   - card management
