@@ -4,7 +4,7 @@ This repository contains a basic Anki add-on scaffold. The add-on package is `an
 
 ## What It Does
 
-The current add-on registers a `Tools > Anki AI: Test` menu item in Anki. Selecting it shows the number of cards in the currently open collection.
+The current add-on registers a `Tools > Anki AI` menu item in Anki. Selecting it opens a blank React-backed webview dialog that will host the batch card generation UI.
 
 ## Local Development
 

@@ -1,28 +1,22 @@
-"""Basic Anki add-on entrypoint."""
+"""Anki AI add-on entrypoint."""
 
 from __future__ import annotations
 
 from aqt import mw
 from aqt.qt import QAction
-from aqt.utils import qconnect, showInfo
+from aqt.utils import qconnect
 
-MENU_ACTION_LABEL = "Anki AI: Test"
+from .gui import open_generator_dialog
 
-
-def show_card_count() -> None:
-    """Show the number of cards in the current Anki collection."""
-    if mw.col is None:
-        showInfo("No collection is currently open.")
-        return
-
-    card_count = mw.col.card_count()
-    showInfo(f"Card count: {card_count}")
+MENU_ACTION_LABEL = "Anki AI"
 
 
 def setup_menu() -> None:
     """Register the add-on action in Anki's Tools menu."""
+    mw.addonManager.setWebExports(__name__, r"web/.*")
+
     action = QAction(MENU_ACTION_LABEL, mw)
-    qconnect(action.triggered, show_card_count)
+    qconnect(action.triggered, open_generator_dialog)
     mw.form.menuTools.addAction(action)
 
 

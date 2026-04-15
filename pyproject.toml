@@ -19,6 +19,14 @@ dev = [
 [tool.setuptools]
 packages = ["anki_ai"]
 
+[tool.setuptools.package-data]
+anki_ai = [
+  "web/*.css",
+  "web/*.js",
+  "web/vendor/*.js",
+  "web/vendor/*.txt",
+]
+
 [tool.mypy]
 python_version = "3.9"
 files = ["anki_ai"]
