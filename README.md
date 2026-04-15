@@ -1,10 +1,55 @@
 # Anki AI Add-on
 
-This repository contains a basic Anki add-on scaffold. The add-on package is `anki_ai/`, and the React frontend source is in `frontend/`.
+Anki AI is an Anki add-on that hosts a React-based flashcard generation
+interface inside an Anki webview. The add-on currently provides the UI shell,
+frontend build pipeline, Anki dialog integration, and a typed JSON bridge between
+the web UI and Python backend.
 
-## What It Does
+The actual AI generation and Anki card insertion flows are not implemented yet.
+The current frontend simulates generated cards so the review/edit workflow can
+be developed before the backend is connected.
 
-The current add-on registers a `Tools > Anki AI` menu item in Anki. Selecting it opens a blank React-backed webview dialog that will host the batch card generation UI.
+## Current State
+
+- Registers a `Tools > Anki AI` menu item when loaded inside Anki.
+- Opens a non-modal `AnkiWebView` dialog and restores its previous geometry.
+- Builds the React app with Vite into `anki_ai/web/`, which is ignored by git and
+  generated locally.
+- Provides a JSON webview transport protocol in `anki_ai/transport.py`.
+  `system.ping` is the only built-in backend method today.
+- Installs a `window.AnkiAI` frontend bridge with request, notification, and
+  event helpers.
+- Presents a flashcard generator UI with source text input, optional file
+  selection, model selection, card count, simulated generation, and card
+  review/edit/discard controls.
+- Stores reviewed cards only in frontend memory for the current dialog session.
+
+## Repository Layout
+
+```text
+anki_ai/              Anki add-on package loaded by Anki
+anki_ai/gui.py        Dialog and webview host
+anki_ai/transport.py  JSON bridge router used by the webview
+frontend/             React, TypeScript, Tailwind, and Vite frontend
+tests/                Python unit tests for the transport layer
+docs/addon-docs/      Local copy of Anki add-on documentation
+Makefile              Build, typecheck, package, and clean targets
+```
+
+Generated paths:
+
+```text
+anki_ai/web/          Vite build output consumed by the add-on
+dist/                 Packaged .ankiaddon archive output
+frontend/node_modules/
+```
+
+## Requirements
+
+- Python 3.9 or newer.
+- Anki 24 or newer for local `aqt` development/type-checking support.
+- Node.js and npm for the React frontend.
+- `make` and `zip` for the included build/package targets.
 
 ## Local Development
 
@@ -15,28 +60,47 @@ python -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-cd frontend
-npm install
-cd ..
 ```
 
-Run type checking:
+Install frontend dependencies:
+
+```shell
+npm install --prefix frontend
+```
+
+Run checks:
 
 ```shell
 make typecheck
+python -m unittest
+npm --prefix frontend run typecheck
 ```
 
-Anki add-ons must run inside Anki. The local Python environment is only for editor support and static checks.
-
-Build the React frontend into the add-on package:
+Build the frontend assets into the add-on package:
 
 ```shell
 make frontend-build
 ```
 
+For frontend-only iteration in a browser, you can run:
+
+```shell
+npm --prefix frontend run dev
+```
+
+The browser dev server does not run inside Anki, so Anki-only bridge behavior
+must still be tested from the add-on dialog.
+
 ## Install Into Anki
 
-Find your Anki `addons21` folder with `Tools > Add-ons > View Files`, then either copy or symlink this repo's `anki_ai/` folder into it.
+Build the frontend first:
+
+```shell
+make frontend-build
+```
+
+Find your Anki `addons21` folder with `Tools > Add-ons > View Files`, then copy
+or symlink this repo's `anki_ai/` folder into it.
 
 On macOS, the add-ons folder is commonly:
 
@@ -50,7 +114,10 @@ Example symlink:
 ln -s "$(pwd)/anki_ai" "$HOME/Library/Application Support/Anki2/addons21/anki_ai"
 ```
 
-Restart Anki after installing or changing the add-on.
+Restart Anki, then open `Tools > Anki AI`.
+
+If the dialog says the frontend assets are missing, run `make frontend-build`
+again and restart or reload the add-on.
 
 ## Package
 
@@ -60,4 +127,25 @@ Build a distributable add-on archive:
 make package
 ```
 
-The package target builds the React frontend first, then writes `dist/anki_ai.ankiaddon`. Its contents are rooted at the add-on files themselves, as required by Anki, rather than containing an extra `anki_ai/` parent directory.
+The package target builds the React frontend first, then writes
+`dist/anki_ai.ankiaddon`. The archive contents are rooted at the add-on files
+themselves, as required by Anki, rather than inside an extra `anki_ai/` parent
+directory.
+
+## Configuration
+
+The add-on includes Anki configuration files:
+
+- `anki_ai/config.json` currently contains `{"enabled": true}`.
+- `anki_ai/config.md` documents that setting.
+
+The setting is present for future behavior gates. The current add-on still
+registers its menu item regardless of this value.
+
+## Known Gaps
+
+- No LLM provider integration is wired up yet.
+- Uploaded files are selected in the UI but not parsed.
+- Generated cards are simulated, not produced by a backend model.
+- Saving cards only updates frontend state for the current dialog session.
+- No notes are written into the Anki collection yet.
