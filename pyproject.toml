@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anki-ai-addon"
+version = "0.1.0"
+description = "Basic Anki add-on scaffold."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "aqt[qt6]>=24.0",
+  "mypy>=1.8",
+]
+
+[tool.setuptools]
+packages = ["anki_ai"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["anki_ai"]
+strict = true
+warn_unused_configs = true
