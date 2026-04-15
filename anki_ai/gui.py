@@ -10,6 +10,7 @@ from aqt.qt import QCloseEvent, QDialog, QVBoxLayout, Qt
 from aqt.utils import disable_help_button, restoreGeom, saveGeom
 from aqt.webview import AnkiWebView
 
+from .collection_transport import register_collection_transport_handlers
 from .transport import TransportRouter
 
 GEOMETRY_KEY = "anki_ai_generator"
@@ -82,6 +83,7 @@ class GeneratorDialog(QDialog):
     def _setup_ui(self) -> None:
         self.web = AnkiWebView(parent=self, title=WINDOW_TITLE)
         self._transport = TransportRouter(self.web)
+        register_collection_transport_handlers(self._transport, lambda: mw.col)
         self.web.set_bridge_command(self._transport.handle_raw_message, self)
 
         layout = QVBoxLayout()

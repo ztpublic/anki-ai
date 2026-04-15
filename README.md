@@ -15,8 +15,11 @@ be developed before the backend is connected.
 - Opens a non-modal `AnkiWebView` dialog and restores its previous geometry.
 - Builds the React app with Vite into `anki_ai/web/`, which is ignored by git and
   generated locally.
-- Provides a JSON webview transport protocol in `anki_ai/transport.py`.
-  `system.ping` is the only built-in backend method today.
+- Provides a JSON webview transport protocol in `anki_ai/transport.py`, with
+  `system.ping` as the base connectivity check.
+- Provides collection service infrastructure for reading deck/card snapshots,
+  checking collection availability, creating/renaming decks, updating note
+  fields, and moving cards between decks.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
@@ -29,6 +32,10 @@ be developed before the backend is connected.
 ```text
 anki_ai/              Anki add-on package loaded by Anki
 anki_ai/gui.py        Dialog and webview host
+anki_ai/collection_services.py
+                      Deck, card, note, and collection service adapter
+anki_ai/collection_transport.py
+                      Bridge method registration for collection services
 anki_ai/transport.py  JSON bridge router used by the webview
 frontend/             React, TypeScript, Tailwind, and Vite frontend
 tests/                Python unit tests for the transport layer
@@ -91,6 +98,27 @@ npm --prefix frontend run dev
 The browser dev server does not run inside Anki, so Anki-only bridge behavior
 must still be tested from the add-on dialog.
 
+## Webview Bridge Methods
+
+The Python backend currently registers these bridge methods:
+
+```text
+system.ping
+anki.collection.status
+anki.collection.snapshot
+anki.decks.list
+anki.decks.ensure
+anki.decks.rename
+anki.cards.search
+anki.cards.get
+anki.cards.updateNoteFields
+anki.cards.moveToDeck
+```
+
+The React UI does not call these methods yet. They are available for the next
+step of wiring live deck/card data into the webview and sending reviewed card
+updates back to Anki.
+
 ## Install Into Anki
 
 Build the frontend first:
@@ -147,5 +175,7 @@ registers its menu item regardless of this value.
 - No LLM provider integration is wired up yet.
 - Uploaded files are selected in the UI but not parsed.
 - Generated cards are simulated, not produced by a backend model.
-- Saving cards only updates frontend state for the current dialog session.
-- No notes are written into the Anki collection yet.
+- Saving generated cards still only updates frontend state for the current
+  dialog session.
+- Existing card/note update infrastructure exists, but generated cards are not
+  inserted into the Anki collection yet.
