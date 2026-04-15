@@ -7,3 +7,9 @@ __pycache__/
 dist/
 anki_ai/web/
 frontend/node_modules/
+.venv/
+venv/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
