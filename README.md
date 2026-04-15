@@ -1,6 +1,6 @@
 # Anki AI Add-on
 
-This repository contains a basic Anki add-on scaffold. The add-on package is `anki_ai/`.
+This repository contains a basic Anki add-on scaffold. The add-on package is `anki_ai/`, and the React frontend source is in `frontend/`.
 
 ## What It Does
 
@@ -15,6 +15,9 @@ python -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+cd frontend
+npm install
+cd ..
 ```
 
 Run type checking:
@@ -24,6 +27,12 @@ make typecheck
 ```
 
 Anki add-ons must run inside Anki. The local Python environment is only for editor support and static checks.
+
+Build the React frontend into the add-on package:
+
+```shell
+make frontend-build
+```
 
 ## Install Into Anki
 
@@ -51,4 +60,4 @@ Build a distributable add-on archive:
 make package
 ```
 
-The archive will be written to `dist/anki_ai.ankiaddon`. Its contents are rooted at the add-on files themselves, as required by Anki, rather than containing an extra `anki_ai/` parent directory.
+The package target builds the React frontend first, then writes `dist/anki_ai.ankiaddon`. Its contents are rooted at the add-on files themselves, as required by Anki, rather than containing an extra `anki_ai/` parent directory.

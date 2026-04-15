@@ -21,10 +21,8 @@ packages = ["anki_ai"]
 
 [tool.setuptools.package-data]
 anki_ai = [
-  "web/*.css",
-  "web/*.js",
-  "web/vendor/*.js",
-  "web/vendor/*.txt",
+  "web/*.html",
+  "web/assets/*",
 ]
 
 [tool.mypy]

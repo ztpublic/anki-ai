@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from aqt import mw
 from aqt.qt import QCloseEvent, QDialog, QVBoxLayout, Qt
@@ -16,9 +18,31 @@ WINDOW_TITLE = "Anki AI"
 _dialog: GeneratorDialog | None = None
 
 
-def _addon_web_path(path: str) -> str:
-    addon_package = mw.addonManager.addonFromModule(__name__)
-    return f"/_addons/{addon_package}/web/{path}"
+def _addon_web_base_url() -> str:
+    addon_package = quote(mw.addonManager.addonFromModule(__name__))
+    return f"{mw.serverURL()}_addons/{addon_package}/web/"
+
+
+def _frontend_html() -> str:
+    index_path = Path(__file__).with_name("web") / "index.html"
+    try:
+        html = index_path.read_text(encoding="utf-8")
+    except OSError:
+        return """
+<!doctype html>
+<html>
+<body>
+<main style="font: 16px sans-serif; padding: 24px;">
+Frontend assets are missing. Run <code>make frontend-build</code>.
+</main>
+</body>
+</html>
+"""
+
+    base_url = _addon_web_base_url()
+    return html.replace('src="./', f'src="{base_url}').replace(
+        'href="./', f'href="{base_url}'
+    )
 
 
 def open_generator_dialog() -> None:
@@ -63,16 +87,7 @@ class GeneratorDialog(QDialog):
         layout.addWidget(self.web)
         self.setLayout(layout)
 
-        self.web.stdHtml(
-            body='<div id="anki-ai-root"></div>',
-            css=[_addon_web_path("app.css")],
-            js=[
-                _addon_web_path("vendor/react.production.min.js"),
-                _addon_web_path("vendor/react-dom.production.min.js"),
-                _addon_web_path("app.js"),
-            ],
-            context=self,
-        )
+        self.web.setHtml(_frontend_html())
 
     def _on_bridge_cmd(self, cmd: str) -> dict[str, Any]:
         try:
