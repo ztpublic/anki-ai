@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 from aqt import mw
 from aqt.qt import QCloseEvent, QDialog, QVBoxLayout, Qt
 from aqt.utils import disable_help_button, restoreGeom, saveGeom
 from aqt.webview import AnkiWebView
+
+from .transport import TransportRouter
 
 GEOMETRY_KEY = "anki_ai_generator"
 WINDOW_TITLE = "Anki AI"
@@ -66,6 +66,7 @@ class GeneratorDialog(QDialog):
     def __init__(self) -> None:
         super().__init__(mw, Qt.WindowType.Window)
         self.web: AnkiWebView | None = None
+        self._transport: TransportRouter | None = None
         self._cleaned_up = False
 
         self.setWindowTitle(WINDOW_TITLE)
@@ -80,7 +81,8 @@ class GeneratorDialog(QDialog):
 
     def _setup_ui(self) -> None:
         self.web = AnkiWebView(parent=self, title=WINDOW_TITLE)
-        self.web.set_bridge_command(self._on_bridge_cmd, self)
+        self._transport = TransportRouter(self.web)
+        self.web.set_bridge_command(self._transport.handle_raw_message, self)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -88,21 +90,6 @@ class GeneratorDialog(QDialog):
         self.setLayout(layout)
 
         self.web.setHtml(_frontend_html())
-
-    def _on_bridge_cmd(self, cmd: str) -> dict[str, Any]:
-        try:
-            message = json.loads(cmd)
-        except json.JSONDecodeError:
-            return {"ok": False, "error": "Invalid JSON bridge command."}
-
-        if not isinstance(message, dict):
-            return {"ok": False, "error": "Bridge command must be an object."}
-
-        command_type = message.get("type")
-        if command_type == "ping":
-            return {"ok": True, "type": "pong"}
-
-        return {"ok": False, "error": f"Unknown bridge command: {command_type}"}
 
     def _cleanup(self) -> None:
         global _dialog
@@ -116,6 +103,8 @@ class GeneratorDialog(QDialog):
         if self.web is not None:
             self.web.cleanup()
             self.web = None
+
+        self._transport = None
 
         if _dialog is self:
             _dialog = None

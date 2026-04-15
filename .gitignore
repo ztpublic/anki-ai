@@ -5,4 +5,5 @@
 __pycache__/
 *.py[cod]
 dist/
+anki_ai/web/
 frontend/node_modules/
