@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -45,6 +45,8 @@ const modelOptions = [
   { value: "claude-3-sonnet", label: "Claude 3.5 Sonnet" },
   { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
 ];
+const DECK_LOAD_RETRY_DELAY_MS = 250;
+const DECK_LOAD_MAX_ATTEMPTS = 20;
 
 function createCardId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -102,42 +104,72 @@ export function App() {
   const selectedModelLabel =
     modelOptions.find((option) => option.value === llm)?.label ?? llm;
 
-  const loadDecks = useCallback(async () => {
-    setIsLoadingDecks(true);
-    setDeckLoadError(null);
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimeoutId: number | undefined;
+    let attempts = 0;
 
-    try {
-      const result = await window.AnkiAI.call<DeckListResponse>(
-        "anki.decks.list",
-        { includeCardCounts: true },
-        { timeoutMs: 5000 },
-      );
-      const nextDecks = result.decks;
+    const loadDecks = async () => {
+      setIsLoadingDecks(true);
+      setDeckLoadError(null);
 
-      setDecks(nextDecks);
-      setSelectedDeckId((previousDeckId) => {
-        if (nextDecks.some((deck) => deck.id === previousDeckId)) {
-          return previousDeckId;
+      try {
+        const result = await window.AnkiAI.call<DeckListResponse>(
+          "anki.decks.list",
+          { includeCardCounts: true },
+          { timeoutMs: 5000 },
+        );
+        if (cancelled) {
+          return;
         }
 
-        return nextDecks[0]?.id ?? "";
-      });
+        const nextDecks = result.decks;
+        setDecks(nextDecks);
+        setSelectedDeckId((previousDeckId) => {
+          if (nextDecks.some((deck) => deck.id === previousDeckId)) {
+            return previousDeckId;
+          }
 
-      if (nextDecks.length === 0) {
-        setDeckLoadError("No decks found in the active collection.");
+          return nextDecks[0]?.id ?? "";
+        });
+
+        if (nextDecks.length === 0) {
+          setDeckLoadError("No decks found in the active collection.");
+        }
+        setIsLoadingDecks(false);
+      } catch (error) {
+        if (
+          error instanceof BridgeTransportError &&
+          error.code === "bridge_unavailable" &&
+          attempts < DECK_LOAD_MAX_ATTEMPTS
+        ) {
+          attempts += 1;
+          retryTimeoutId = window.setTimeout(() => {
+            void loadDecks();
+          }, DECK_LOAD_RETRY_DELAY_MS);
+          return;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setDecks([]);
+        setSelectedDeckId("");
+        setDeckLoadError(deckErrorMessage(error));
+        setIsLoadingDecks(false);
       }
-    } catch (error) {
-      setDecks([]);
-      setSelectedDeckId("");
-      setDeckLoadError(deckErrorMessage(error));
-    } finally {
-      setIsLoadingDecks(false);
-    }
-  }, []);
+    };
 
-  useEffect(() => {
     void loadDecks();
-  }, [loadDecks]);
+
+    return () => {
+      cancelled = true;
+      if (retryTimeoutId !== undefined) {
+        window.clearTimeout(retryTimeoutId);
+      }
+    };
+  }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(event.target.files ?? []);
