@@ -115,6 +115,6 @@ class GeneratorDialog(QDialog):
         self._cleanup()
         super().reject()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(self, event: QCloseEvent | None) -> None:
         self._cleanup()
         super().closeEvent(event)

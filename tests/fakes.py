@@ -10,10 +10,12 @@ class FakeNote:
         note_id: int,
         fields: dict[str, str],
         tags: list[str] | None = None,
+        note_type: dict[str, Any] | None = None,
     ) -> None:
         self.id = note_id
         self.fields = fields
         self.tags = [] if tags is None else tags
+        self.note_type = note_type
 
     def items(self) -> list[tuple[str, str]]:
         return list(self.fields.items())
@@ -23,6 +25,30 @@ class FakeNote:
 
     def __setitem__(self, key: str, value: str) -> None:
         self.fields[key] = value
+
+    def fields_check(self) -> int:
+        first_field = next(iter(self.fields.values()), "")
+        return 1 if not first_field.strip() else 0
+
+
+class FakeModels:
+    def __init__(self) -> None:
+        self.note_types: dict[int, dict[str, Any]] = {
+            1001: {
+                "id": 1001,
+                "name": "Basic",
+                "flds": [{"name": "Front"}, {"name": "Back"}],
+            }
+        }
+
+    def by_name(self, name: str) -> dict[str, Any] | None:
+        for note_type in self.note_types.values():
+            if note_type["name"] == name:
+                return note_type
+        return None
+
+    def get(self, note_type_id: int) -> dict[str, Any] | None:
+        return self.note_types.get(note_type_id)
 
 
 class FakeCard:
@@ -51,10 +77,16 @@ class FakeCard:
         return self._note
 
     def question(self) -> str:
-        return self._note.fields.get("Front", "")
+        if "Front" in self._note.fields:
+            return self._note.fields.get("Front", "")
+        values = list(self._note.fields.values())
+        return values[0] if values else ""
 
     def answer(self) -> str:
-        return self._note.fields.get("Back", "")
+        if "Back" in self._note.fields:
+            return self._note.fields.get("Back", "")
+        values = list(self._note.fields.values())
+        return values[1] if len(values) > 1 else ""
 
 
 class FakeDecks:
@@ -97,18 +129,28 @@ class FakeDecks:
 class FakeCollection:
     def __init__(self) -> None:
         self.decks = FakeDecks()
+        self.models = FakeModels()
+        basic_note_type = self.models.by_name("Basic")
+        assert basic_note_type is not None
         first_note = FakeNote(
             201,
             {"Front": "Capital of France?", "Back": "Paris"},
             ["geography"],
+            basic_note_type,
         )
-        second_note = FakeNote(202, {"Front": "2 + 2", "Back": "4"})
+        second_note = FakeNote(202, {"Front": "2 + 2", "Back": "4"}, note_type=basic_note_type)
+        self.notes = {
+            201: first_note,
+            202: second_note,
+        }
         self.cards = {
             101: FakeCard(101, first_note, 1),
             102: FakeCard(102, second_note, 2),
         }
         self.updated_notes: list[FakeNote] = []
         self.updated_cards: list[FakeCard] = []
+        self.next_note_id = 203
+        self.next_card_id = 103
 
     def card_count(self) -> int:
         return len(self.cards)
@@ -137,8 +179,42 @@ class FakeCollection:
     def get_card(self, card_id: int) -> FakeCard | None:
         return self.cards.get(card_id)
 
+    def get_note(self, note_id: int) -> FakeNote | None:
+        return self.notes.get(note_id)
+
+    def new_note(self, note_type: dict[str, Any]) -> FakeNote:
+        field_values = {
+            str(field["name"]): ""
+            for field in note_type.get("flds", [])
+        }
+        return FakeNote(0, field_values, note_type=note_type)
+
     def update_note(self, note: FakeNote) -> None:
         self.updated_notes.append(note)
+        self.notes[note.id] = note
 
     def update_card(self, card: FakeCard) -> None:
         self.updated_cards.append(card)
+
+    def add_note(self, note: FakeNote, deck_id: int) -> SimpleNamespace:
+        if note.id == 0:
+            note.id = self.next_note_id
+            self.next_note_id += 1
+        self.notes[note.id] = note
+
+        card = FakeCard(self.next_card_id, note, deck_id)
+        self.cards[self.next_card_id] = card
+        self.next_card_id += 1
+        return SimpleNamespace(count=1, note_id=note.id)
+
+    def add_notes(self, requests: list[Any]) -> SimpleNamespace:
+        note_ids: list[int] = []
+        for request in requests:
+            response = self.add_note(request.note, request.deck_id)
+            note_ids.append(int(response.note_id))
+        return SimpleNamespace(nids=note_ids)
+
+    def card_ids_of_note(self, note_id: int) -> list[int]:
+        return sorted(
+            card_id for card_id, card in self.cards.items() if card.nid == note_id
+        )

@@ -85,7 +85,8 @@ class TransportRouter:
             return self._handle_request(message)
 
         if kind == "notification":
-            return self._handle_notification(message)
+            self._handle_notification(message)
+            return None
 
         return self._error_response(
             request_id,

@@ -1,0 +1,4 @@
+implement the basic Anki cards generation workflow using the claude
+code python sdk. the cards generation is a claude code agent task.
+the task is executed in a temp workspace folder. the input materials
+would be copied to a materials folder.

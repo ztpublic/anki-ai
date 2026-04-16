@@ -5,9 +5,9 @@ interface inside an Anki webview. The add-on currently provides the UI shell,
 frontend build pipeline, Anki dialog integration, and a typed JSON bridge between
 the web UI and Python backend.
 
-The actual AI generation and Anki card insertion flows are not implemented yet.
-The current frontend simulates generated cards so the review/edit workflow can
-be developed before the backend is connected.
+The actual AI generation flow is not implemented yet. The current frontend
+still simulates generated cards, but reviewed cards can now be inserted into
+the active Anki collection through the webview bridge.
 
 ## Current State
 
@@ -18,16 +18,16 @@ be developed before the backend is connected.
 - Provides a JSON webview transport protocol in `anki_ai/transport.py`, with
   `system.ping` as the base connectivity check.
 - Provides collection service infrastructure for reading deck/card snapshots,
-  checking collection availability, creating/renaming decks, updating note
-  fields, and moving cards between decks.
+  checking collection availability, creating/renaming decks, inserting notes as
+  cards in batch, updating note fields, and moving cards between decks.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
   selection, model selection, target deck selection, card count, simulated
   generation, and card review/edit/discard controls.
 - Loads target decks from the active Anki collection through the webview bridge.
-- Stores reviewed cards only in frontend memory for the current dialog session,
-  including the selected target deck.
+- Saves reviewed cards into the selected Anki deck with the stock `Basic`
+  note type by default.
 
 ## Repository Layout
 
@@ -113,13 +113,106 @@ anki.decks.ensure
 anki.decks.rename
 anki.cards.search
 anki.cards.get
+anki.cards.addToDeck
 anki.cards.updateNoteFields
 anki.cards.moveToDeck
 ```
 
 The React UI currently calls `anki.decks.list` to populate the target deck
-selector. The remaining methods are available for wiring live card data into the
-webview and sending reviewed card updates back to Anki.
+selector, and `anki.cards.addToDeck` to persist reviewed generated cards. The
+remaining methods are available for wiring live card data into the webview and
+sending reviewed card updates back to Anki.
+
+## Batch Card Insert Format
+
+Generated cards are inserted with `anki.cards.addToDeck`. The method creates one
+note per payload entry, using the provided note type and destination deck.
+
+Request:
+
+```json
+{
+  "protocol": "anki-ai.transport.v1",
+  "kind": "request",
+  "id": "req-1",
+  "method": "anki.cards.addToDeck",
+  "params": {
+    "deckId": "1",
+    "noteTypeName": "Basic",
+    "cards": [
+      {
+        "fields": {
+          "Front": "What is the capital of France?",
+          "Back": "Paris"
+        },
+        "tags": ["geography", "ai-generated"]
+      },
+      {
+        "fields": {
+          "Front": "2 + 2",
+          "Back": "4"
+        }
+      }
+    ]
+  }
+}
+```
+
+Rules:
+
+- Provide either `deckId` or `deckName`.
+- `noteTypeName` is optional and defaults to `Basic`.
+- `noteTypeId` may be provided instead of `noteTypeName`.
+- Each entry in `cards` must include a non-empty `fields` object.
+- `fields` keys must exactly match the selected note type's field names.
+- `tags` is optional and must be a list of strings when provided.
+
+Response:
+
+```json
+{
+  "protocol": "anki-ai.transport.v1",
+  "kind": "response",
+  "id": "req-1",
+  "ok": true,
+  "result": {
+    "deck": {
+      "id": "1",
+      "name": "Default",
+      "cardCount": null
+    },
+    "noteType": {
+      "id": "1001",
+      "name": "Basic",
+      "fieldNames": ["Front", "Back"]
+    },
+    "cards": [
+      {
+        "id": "1234567890",
+        "noteId": "1234567891",
+        "deckId": "1",
+        "question": "What is the capital of France?",
+        "answer": "Paris",
+        "fields": {
+          "Front": "What is the capital of France?",
+          "Back": "Paris"
+        },
+        "tags": ["geography", "ai-generated"],
+        "state": {
+          "queue": 0,
+          "type": 0,
+          "due": 1,
+          "interval": 0,
+          "factor": 2500,
+          "reps": 0,
+          "lapses": 0,
+          "ordinal": 0
+        }
+      }
+    ]
+  }
+}
+```
 
 ## Install Into Anki
 
@@ -177,7 +270,3 @@ registers its menu item regardless of this value.
 - No LLM provider integration is wired up yet.
 - Uploaded files are selected in the UI but not parsed.
 - Generated cards are simulated, not produced by a backend model.
-- Saving generated cards still only updates frontend state for the current
-  dialog session, with the selected target deck attached to each saved card.
-- Existing card/note update infrastructure exists, but generated cards are not
-  inserted into the Anki collection yet.

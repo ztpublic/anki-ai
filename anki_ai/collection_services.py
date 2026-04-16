@@ -30,6 +30,17 @@ class CollectionSnapshot(TypedDict):
     decks: list[DeckSnapshot]
 
 
+class NoteTypeSnapshot(TypedDict):
+    id: str
+    name: str
+    fieldNames: list[str]
+
+
+class NewCardInput(TypedDict):
+    fields: dict[str, str]
+    tags: list[str]
+
+
 class CollectionServiceError(Exception):
     """A domain error that can be safely surfaced to bridge callers."""
 
@@ -55,6 +66,12 @@ class AnkiCollectionService:
 
     DEFAULT_CARD_SEARCH_LIMIT = 50
     MAX_CARD_SEARCH_LIMIT = 500
+    DEFAULT_ADD_NOTE_TYPE_NAME = "Basic"
+    NOTE_FIELDS_CHECK_EMPTY = 1
+    NOTE_FIELDS_CHECK_DUPLICATE = 2
+    NOTE_FIELDS_CHECK_MISSING_CLOZE = 3
+    NOTE_FIELDS_CHECK_NOTETYPE_NOT_CLOZE = 4
+    NOTE_FIELDS_CHECK_FIELD_NOT_CLOZE = 5
 
     def __init__(self, collection: Any) -> None:
         self._collection = collection
@@ -312,6 +329,54 @@ class AnkiCollectionService:
             "updatedCardIds": updated_card_ids,
         }
 
+    def add_cards_to_deck(
+        self,
+        cards: Sequence[NewCardInput],
+        *,
+        deck_id: int | None = None,
+        deck_name: str | None = None,
+        note_type_id: int | None = None,
+        note_type_name: str = DEFAULT_ADD_NOTE_TYPE_NAME,
+    ) -> dict[str, Any]:
+        if not cards:
+            raise CollectionServiceError(
+                "missing_cards",
+                "At least one card payload is required.",
+            )
+
+        if deck_id is None:
+            if deck_name is None:
+                raise CollectionServiceError(
+                    "missing_deck",
+                    "Either deck_id or deck_name must be provided.",
+                )
+            deck_result = self.ensure_deck(deck_name)
+            deck = cast(DeckSnapshot, deck_result["deck"])
+            deck_id = self._coerce_int(deck["id"], "deck_id")
+        else:
+            deck = self.get_deck(deck_id, include_card_counts=False)
+
+        note_type = self._resolve_note_type(
+            note_type_id=note_type_id,
+            note_type_name=note_type_name,
+        )
+        notes = [
+            self._new_note_from_input(card, note_type, card_index=index)
+            for index, card in enumerate(cards)
+        ]
+
+        self._add_new_notes(notes, deck_id)
+
+        added_cards: list[CardSnapshot] = []
+        for note in notes:
+            added_cards.extend(self._added_cards_for_note(note))
+
+        return {
+            "deck": deck,
+            "noteType": self._note_type_snapshot(note_type),
+            "cards": added_cards,
+        }
+
     def _deck_manager(self) -> Any:
         deck_manager = getattr(self._collection, "decks", None)
         if deck_manager is None:
@@ -355,6 +420,225 @@ class AnkiCollectionService:
             "note_not_found",
             "Could not resolve the note for the requested card.",
         )
+
+    def _model_manager(self) -> Any:
+        model_manager = getattr(self._collection, "models", None)
+        if model_manager is None:
+            raise CollectionServiceError(
+                "unsupported_notetype_api",
+                "The active Anki collection cannot access note types.",
+            )
+        return model_manager
+
+    def _resolve_note_type(
+        self,
+        *,
+        note_type_id: int | None,
+        note_type_name: str,
+    ) -> Mapping[str, Any]:
+        model_manager = self._model_manager()
+
+        if note_type_id is not None:
+            get_note_type = getattr(model_manager, "get", None)
+            if not callable(get_note_type):
+                raise CollectionServiceError(
+                    "unsupported_notetype_api",
+                    "The active Anki collection cannot fetch note types by id.",
+                )
+            note_type = get_note_type(note_type_id)
+            if note_type is None:
+                raise CollectionServiceError(
+                    "note_type_not_found",
+                    f"Note type not found: {note_type_id}",
+                    {"noteTypeId": str(note_type_id)},
+                )
+            return self._require_mapping(note_type, "note_type")
+
+        get_note_type_by_name = getattr(model_manager, "by_name", None)
+        if not callable(get_note_type_by_name):
+            raise CollectionServiceError(
+                "unsupported_notetype_api",
+                "The active Anki collection cannot fetch note types by name.",
+            )
+
+        note_type = get_note_type_by_name(note_type_name)
+        if note_type is None:
+            raise CollectionServiceError(
+                "note_type_not_found",
+                f"Note type not found: {note_type_name}",
+                {"noteTypeName": note_type_name},
+            )
+
+        return self._require_mapping(note_type, "note_type")
+
+    def _new_note_from_input(
+        self,
+        card: NewCardInput,
+        note_type: Mapping[str, Any],
+        *,
+        card_index: int,
+    ) -> Any:
+        create_note = getattr(self._collection, "new_note", None)
+        if not callable(create_note):
+            raise CollectionServiceError(
+                "unsupported_note_api",
+                "The active Anki collection cannot create notes.",
+            )
+
+        note = create_note(dict(note_type))
+        note_fields = self._note_fields(note)
+        unknown_fields = sorted(set(card["fields"]) - set(note_fields))
+        if unknown_fields:
+            raise CollectionServiceError(
+                "unknown_note_field",
+                "Cannot add note fields that are not present on the note type.",
+                {
+                    "cardIndex": card_index,
+                    "fields": unknown_fields,
+                    "noteType": self._coerce_text(note_type.get("name")),
+                },
+            )
+
+        for field_name, value in card["fields"].items():
+            note[field_name] = value
+
+        tags = self._normalize_tags(card["tags"])
+        if hasattr(note, "tags"):
+            setattr(note, "tags", tags)
+
+        self._validate_new_note(note, card_index=card_index)
+        return note
+
+    def _validate_new_note(self, note: Any, *, card_index: int) -> None:
+        fields_check = getattr(note, "fields_check", None)
+        if not callable(fields_check):
+            return
+
+        result = fields_check()
+        if result == self.NOTE_FIELDS_CHECK_DUPLICATE:
+            return
+        if result == self.NOTE_FIELDS_CHECK_EMPTY:
+            raise CollectionServiceError(
+                "empty_first_field",
+                "Cannot add a note with an empty first field.",
+                {"cardIndex": card_index},
+            )
+        if result == self.NOTE_FIELDS_CHECK_MISSING_CLOZE:
+            raise CollectionServiceError(
+                "missing_cloze",
+                "Cannot add a cloze note without a cloze deletion.",
+                {"cardIndex": card_index},
+            )
+        if result == self.NOTE_FIELDS_CHECK_NOTETYPE_NOT_CLOZE:
+            raise CollectionServiceError(
+                "invalid_note_type",
+                "The selected note type does not support cloze deletions.",
+                {"cardIndex": card_index},
+            )
+        if result == self.NOTE_FIELDS_CHECK_FIELD_NOT_CLOZE:
+            raise CollectionServiceError(
+                "invalid_cloze_field",
+                "The selected field does not support cloze deletions.",
+                {"cardIndex": card_index},
+            )
+
+    def _add_new_notes(self, notes: Sequence[Any], deck_id: int) -> None:
+        add_notes = getattr(self._collection, "add_notes", None)
+        if callable(add_notes):
+            add_note_request_type: Any | None
+            try:
+                from anki.collection import AddNoteRequest as add_note_request_type
+            except ImportError:
+                add_note_request_type = None
+
+            if add_note_request_type is not None:
+                add_notes(
+                    [
+                        add_note_request_type(note=note, deck_id=deck_id)
+                        for note in notes
+                    ]
+                )
+                return
+
+        add_note = getattr(self._collection, "add_note", None)
+        if callable(add_note):
+            for note in notes:
+                add_note(note, deck_id)
+            return
+
+        raise CollectionServiceError(
+            "unsupported_note_api",
+            "The active Anki collection cannot add notes.",
+        )
+
+    def _added_cards_for_note(self, note: Any) -> list[CardSnapshot]:
+        note_id = self._coerce_int(getattr(note, "id", None), "note_id")
+        card_ids = self._card_ids_for_note(note, note_id=note_id)
+        if not card_ids:
+            raise CollectionServiceError(
+                "card_generation_failed",
+                "The note was added, but no cards were generated.",
+                {"noteId": str(note_id)},
+            )
+
+        return [self.get_card(card_id) for card_id in card_ids]
+
+    def _card_ids_for_note(self, note: Any, *, note_id: int) -> list[int]:
+        note_card_ids = getattr(note, "card_ids", None)
+        if callable(note_card_ids):
+            raw_card_ids = note_card_ids()
+            if isinstance(raw_card_ids, Iterable):
+                return [
+                    self._coerce_int(raw_card_id, "card_id")
+                    for raw_card_id in raw_card_ids
+                ]
+
+        collection_card_ids = getattr(self._collection, "card_ids_of_note", None)
+        if callable(collection_card_ids):
+            raw_card_ids = collection_card_ids(note_id)
+            if isinstance(raw_card_ids, Iterable):
+                return [
+                    self._coerce_int(raw_card_id, "card_id")
+                    for raw_card_id in raw_card_ids
+                ]
+
+        return []
+
+    def _note_type_snapshot(self, note_type: Mapping[str, Any]) -> NoteTypeSnapshot:
+        return {
+            "id": str(self._coerce_int(note_type.get("id"), "note_type_id")),
+            "name": self._coerce_required_text(note_type.get("name"), "note_type_name"),
+            "fieldNames": self._note_type_field_names(note_type),
+        }
+
+    def _note_type_field_names(self, note_type: Mapping[str, Any]) -> list[str]:
+        fields = note_type.get("flds")
+        if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
+            raise CollectionServiceError(
+                "invalid_collection_object",
+                "note_type fields must be a sequence.",
+            )
+
+        field_names: list[str] = []
+        for field in fields:
+            field_mapping = self._require_mapping(field, "note_type_field")
+            field_names.append(
+                self._coerce_required_text(field_mapping.get("name"), "field_name")
+            )
+
+        return field_names
+
+    @staticmethod
+    def _normalize_tags(tags: Sequence[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for tag in tags:
+            normalized_tag = str(tag).strip()
+            if not normalized_tag or normalized_tag in seen:
+                continue
+            seen.add(normalized_tag)
+            normalized.append(normalized_tag)
+        return normalized
 
     def _card_snapshot(
         self,
@@ -556,5 +840,5 @@ class AnkiCollectionService:
     @staticmethod
     def _sequence_record(value: Any) -> Sequence[Any] | None:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            return cast(Sequence[Any], value)
+            return value
         return None

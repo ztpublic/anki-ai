@@ -99,6 +99,60 @@ class AnkiCollectionServiceTest(unittest.TestCase):
         self.assertEqual(error.exception.code, "unknown_note_field")
         self.assertEqual(collection.updated_notes, [])
 
+    def test_add_cards_to_named_deck_creates_notes_and_returns_snapshots(self) -> None:
+        collection = FakeCollection()
+        service = AnkiCollectionService(collection)
+
+        result = service.add_cards_to_deck(
+            [
+                {
+                    "fields": {"Front": "Largest ocean?", "Back": "Pacific"},
+                    "tags": ["geography", "ai"],
+                },
+                {
+                    "fields": {"Front": "Speed of light?", "Back": "299,792,458 m/s"},
+                    "tags": [],
+                },
+            ],
+            deck_name="Generated",
+        )
+
+        self.assertEqual(result["deck"], {"id": "3", "name": "Generated", "cardCount": None})
+        self.assertEqual(
+            result["noteType"],
+            {"id": "1001", "name": "Basic", "fieldNames": ["Front", "Back"]},
+        )
+        self.assertEqual(len(result["cards"]), 2)
+        self.assertEqual(result["cards"][0]["deckId"], "3")
+        self.assertEqual(result["cards"][0]["question"], "Largest ocean?")
+        self.assertEqual(result["cards"][0]["tags"], ["geography", "ai"])
+        self.assertEqual(result["cards"][1]["answer"], "299,792,458 m/s")
+        self.assertEqual(collection.card_count(), 4)
+
+    def test_add_cards_to_deck_rejects_unknown_fields(self) -> None:
+        collection = FakeCollection()
+        service = AnkiCollectionService(collection)
+
+        with self.assertRaises(CollectionServiceError) as error:
+            service.add_cards_to_deck(
+                [{"fields": {"Front": "Question", "Extra": "Nope"}, "tags": []}],
+                deck_id=1,
+            )
+
+        self.assertEqual(error.exception.code, "unknown_note_field")
+
+    def test_add_cards_to_deck_rejects_empty_first_field(self) -> None:
+        collection = FakeCollection()
+        service = AnkiCollectionService(collection)
+
+        with self.assertRaises(CollectionServiceError) as error:
+            service.add_cards_to_deck(
+                [{"fields": {"Front": "   ", "Back": "Answer"}, "tags": []}],
+                deck_id=1,
+            )
+
+        self.assertEqual(error.exception.code, "empty_first_field")
+
     def test_move_cards_to_existing_deck_updates_cards(self) -> None:
         collection = FakeCollection()
         service = AnkiCollectionService(collection)

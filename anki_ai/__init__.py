@@ -21,9 +21,10 @@ def setup_menu() -> None:
 
 
 try:
-    import aqt as _aqt  # noqa: F401
+    from aqt import mw as _mw
 except ModuleNotFoundError as error:
     if error.name != "aqt":
         raise
 else:
-    setup_menu()
+    if _mw is not None:
+        setup_menu()

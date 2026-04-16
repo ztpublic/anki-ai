@@ -33,6 +33,34 @@ type DeckListResponse = {
   decks: Deck[];
 };
 
+type InsertCardPayload = {
+  fields: Record<string, string>;
+  tags?: string[];
+};
+
+type InsertedCard = {
+  id: string;
+  noteId: string;
+  deckId: string;
+  question: string;
+  answer: string;
+  fields: Record<string, string>;
+  tags: string[];
+  state: Record<string, unknown>;
+};
+
+type NoteType = {
+  id: string;
+  name: string;
+  fieldNames: string[];
+};
+
+type AddCardsResponse = {
+  deck: Deck;
+  noteType: NoteType;
+  cards: InsertedCard[];
+};
+
 type SavedFlashcard = Flashcard & {
   deckId: string;
   deckName: string;
@@ -80,6 +108,18 @@ function deckErrorMessage(error: unknown): string {
   return "Decks could not be loaded.";
 }
 
+function saveErrorMessage(error: unknown): string {
+  if (error instanceof BridgeTransportError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Cards could not be saved.";
+}
+
 export function App() {
   const [llm, setLlm] = useState("gpt-4o");
   const [inputText, setInputText] = useState("");
@@ -93,13 +133,19 @@ export function App() {
   const [selectedDeckId, setSelectedDeckId] = useState("");
   const [isLoadingDecks, setIsLoadingDecks] = useState(true);
   const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
+  const [isSavingCards, setIsSavingCards] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(
+    null,
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentCard = generatedCards[currentCardIndex];
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
-  const canSaveCards = selectedDeck !== null && generatedCards.length > 0;
+  const canSaveCards =
+    selectedDeck !== null && generatedCards.length > 0 && !isSavingCards;
 
   const selectedModelLabel =
     modelOptions.find((option) => option.value === llm)?.label ?? llm;
@@ -191,6 +237,8 @@ export function App() {
       return;
     }
 
+    setSaveError(null);
+    setSaveSuccessMessage(null);
     setIsGenerating(true);
     setGeneratedCards([]);
     setCurrentCardIndex(0);
@@ -219,20 +267,62 @@ export function App() {
     );
   };
 
-  const handleFinish = () => {
-    if (selectedDeck === null) {
+  const handleFinish = async () => {
+    if (selectedDeck === null || generatedCards.length === 0 || isSavingCards) {
       return;
     }
 
-    const savedCards = generatedCards.map((card) => ({
-      ...card,
-      deckId: selectedDeck.id,
-      deckName: selectedDeck.name,
-    }));
+    setIsSavingCards(true);
+    setSaveError(null);
+    setSaveSuccessMessage(null);
 
-    setSavedLibrary((previousCards) => [...previousCards, ...savedCards]);
-    setGeneratedCards([]);
-    setCurrentCardIndex(0);
+    try {
+      const result = await window.AnkiAI.call<AddCardsResponse>(
+        "anki.cards.addToDeck",
+        {
+          deckId: selectedDeck.id,
+          noteTypeName: "Basic",
+          cards: generatedCards.map<InsertCardPayload>((card) => ({
+            fields: {
+              Front: card.front,
+              Back: card.back,
+            },
+          })),
+        },
+        { timeoutMs: 15000 },
+      );
+
+      const savedCards = result.cards.map((card) => ({
+        id: card.id,
+        front: card.fields.Front ?? card.question,
+        back: card.fields.Back ?? card.answer,
+        deckId: result.deck.id,
+        deckName: result.deck.name,
+      }));
+
+      setSavedLibrary((previousCards) => [...previousCards, ...savedCards]);
+      setDecks((previousDecks) =>
+        previousDecks.map((deck) => {
+          if (deck.id !== result.deck.id || deck.cardCount === null) {
+            return deck;
+          }
+
+          return {
+            ...deck,
+            cardCount: deck.cardCount + result.cards.length,
+          };
+        }),
+      );
+      setGeneratedCards([]);
+      setCurrentCardIndex(0);
+      setSaveSuccessMessage(
+        `Saved ${result.cards.length} cards to ${result.deck.name}.`,
+      );
+    } catch (error) {
+      setSaveError(saveErrorMessage(error));
+    } finally {
+      setIsSavingCards(false);
+    }
   };
 
   const handleCardUpdate = (field: "front" | "back", value: string) => {
@@ -551,9 +641,14 @@ export function App() {
                   className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  Save {generatedCards.length} Cards
+                  {isSavingCards ? "Saving..." : `Save ${generatedCards.length} Cards`}
                 </button>
               </div>
+              {saveError !== null ? (
+                <div className="border-t border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+                  {saveError}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 p-8 text-center">
@@ -571,6 +666,12 @@ export function App() {
                 <div className="mt-5 flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-500">
                   <AlertCircle className="h-4 w-4" />
                   Waiting for source material
+                </div>
+              ) : null}
+              {saveSuccessMessage !== null ? (
+                <div className="mt-5 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {saveSuccessMessage}
                 </div>
               ) : null}
             </div>

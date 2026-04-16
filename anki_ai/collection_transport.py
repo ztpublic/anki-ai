@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any, Optional, cast
 
-from .collection_services import AnkiCollectionService, CollectionServiceError
+from .collection_services import (
+    AnkiCollectionService,
+    CollectionServiceError,
+    NewCardInput,
+)
 from .transport import JsonObject, TransportError, TransportRouter
 
-CollectionProvider = Callable[[], Any | None]
+CollectionProvider = Callable[[], Optional[Any]]
 
 
 def register_collection_transport_handlers(
@@ -25,6 +29,7 @@ def register_collection_transport_handlers(
     router.register("anki.decks.rename", handlers.rename_deck)
     router.register("anki.cards.search", handlers.search_cards)
     router.register("anki.cards.get", handlers.get_card)
+    router.register("anki.cards.addToDeck", handlers.add_cards_to_deck)
     router.register("anki.cards.updateNoteFields", handlers.update_note_fields)
     router.register("anki.cards.moveToDeck", handlers.move_cards_to_deck)
 
@@ -95,6 +100,30 @@ class CollectionTransportHandlers:
     def get_card(self, params: JsonObject) -> JsonObject:
         card_id = _required_id(params, "cardId")
         return self._run(lambda service: {"card": service.get_card(card_id)})
+
+    def add_cards_to_deck(self, params: JsonObject) -> JsonObject:
+        cards = _required_card_inputs(params, "cards")
+        deck_id = _optional_id(params, "deckId")
+        deck_name = _optional_string(params, "deckName")
+        note_type_id = _optional_id(params, "noteTypeId")
+        note_type_name = _optional_string(params, "noteTypeName")
+
+        if deck_id is None and deck_name is None:
+            raise TransportError(
+                "invalid_params",
+                "Either deckId or deckName must be provided.",
+            )
+
+        return self._run(
+            lambda service: service.add_cards_to_deck(
+                cards,
+                deck_id=deck_id,
+                deck_name=deck_name,
+                note_type_id=note_type_id,
+                note_type_name=note_type_name
+                or AnkiCollectionService.DEFAULT_ADD_NOTE_TYPE_NAME,
+            )
+        )
 
     def update_note_fields(self, params: JsonObject) -> JsonObject:
         card_id = _required_id(params, "cardId")
@@ -199,7 +228,7 @@ def _optional_int(
             f"{key} must be between {minimum} and {maximum}.",
         )
 
-    return value
+    return cast(int, value)
 
 
 def _required_id(params: JsonObject, key: str) -> int:
@@ -273,3 +302,81 @@ def _required_string_mapping(params: JsonObject, key: str) -> Mapping[str, str]:
         fields[field_name] = field_value
 
     return fields
+
+
+def _required_card_inputs(params: JsonObject, key: str) -> list[NewCardInput]:
+    value = params.get(key)
+    if not isinstance(value, list) or not value:
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty list of card payloads.",
+        )
+
+    cards: list[NewCardInput] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise TransportError(
+                "invalid_params",
+                f"{key}[{index}] must be an object.",
+            )
+
+        fields = _required_nested_string_mapping(item, "fields", f"{key}[{index}]")
+        tags = _optional_string_list(item, "tags", f"{key}[{index}]")
+        cards.append({"fields": fields, "tags": tags})
+
+    return cards
+
+
+def _required_nested_string_mapping(
+    payload: JsonObject,
+    key: str,
+    prefix: str,
+) -> dict[str, str]:
+    value = payload.get(key)
+    if not isinstance(value, dict) or not value:
+        raise TransportError(
+            "invalid_params",
+            f"{prefix}.{key} must be a non-empty object.",
+        )
+
+    fields: dict[str, str] = {}
+    for field_name, field_value in value.items():
+        if not isinstance(field_name, str) or not field_name:
+            raise TransportError(
+                "invalid_params",
+                f"{prefix}.{key} must have non-empty string keys.",
+            )
+        if not isinstance(field_value, str):
+            raise TransportError(
+                "invalid_params",
+                f"{prefix}.{key}.{field_name} must be a string.",
+            )
+        fields[field_name] = field_value
+
+    return fields
+
+
+def _optional_string_list(
+    payload: JsonObject,
+    key: str,
+    prefix: str,
+) -> list[str]:
+    value = payload.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TransportError(
+            "invalid_params",
+            f"{prefix}.{key} must be a list of strings when provided.",
+        )
+
+    tags: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise TransportError(
+                "invalid_params",
+                f"{prefix}.{key}[{index}] must be a string.",
+            )
+        tags.append(item)
+
+    return tags
