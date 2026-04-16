@@ -23,9 +23,11 @@ be developed before the backend is connected.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
-  selection, model selection, card count, simulated generation, and card
-  review/edit/discard controls.
-- Stores reviewed cards only in frontend memory for the current dialog session.
+  selection, model selection, target deck selection, card count, simulated
+  generation, and card review/edit/discard controls.
+- Loads target decks from the active Anki collection through the webview bridge.
+- Stores reviewed cards only in frontend memory for the current dialog session,
+  including the selected target deck.
 
 ## Repository Layout
 
@@ -115,9 +117,9 @@ anki.cards.updateNoteFields
 anki.cards.moveToDeck
 ```
 
-The React UI does not call these methods yet. They are available for the next
-step of wiring live deck/card data into the webview and sending reviewed card
-updates back to Anki.
+The React UI currently calls `anki.decks.list` to populate the target deck
+selector. The remaining methods are available for wiring live card data into the
+webview and sending reviewed card updates back to Anki.
 
 ## Install Into Anki
 
@@ -176,6 +178,6 @@ registers its menu item regardless of this value.
 - Uploaded files are selected in the UI but not parsed.
 - Generated cards are simulated, not produced by a backend model.
 - Saving generated cards still only updates frontend state for the current
-  dialog session.
+  dialog session, with the selected target deck attached to each saved card.
 - Existing card/note update infrastructure exists, but generated cards are not
   inserted into the Anki collection yet.

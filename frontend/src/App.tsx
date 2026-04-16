@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -15,10 +15,27 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 
+import { BridgeTransportError } from "./bridge";
+
 type Flashcard = {
   id: string;
   front: string;
   back: string;
+};
+
+type Deck = {
+  id: string;
+  name: string;
+  cardCount: number | null;
+};
+
+type DeckListResponse = {
+  decks: Deck[];
+};
+
+type SavedFlashcard = Flashcard & {
+  deckId: string;
+  deckName: string;
 };
 
 const modelOptions = [
@@ -37,6 +54,30 @@ function createCardId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function deckOptionLabel(deck: Deck): string {
+  if (deck.cardCount === null) {
+    return deck.name;
+  }
+
+  return `${deck.name} (${deck.cardCount})`;
+}
+
+function deckErrorMessage(error: unknown): string {
+  if (error instanceof BridgeTransportError) {
+    if (error.code === "bridge_unavailable") {
+      return "Open in Anki to load decks.";
+    }
+
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Decks could not be loaded.";
+}
+
 export function App() {
   const [llm, setLlm] = useState("gpt-4o");
   const [inputText, setInputText] = useState("");
@@ -45,14 +86,58 @@ export function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedCards, setGeneratedCards] = useState<Flashcard[]>([]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [savedLibrary, setSavedLibrary] = useState<Flashcard[]>([]);
+  const [savedLibrary, setSavedLibrary] = useState<SavedFlashcard[]>([]);
+  const [decks, setDecks] = useState<Deck[]>([]);
+  const [selectedDeckId, setSelectedDeckId] = useState("");
+  const [isLoadingDecks, setIsLoadingDecks] = useState(true);
+  const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentCard = generatedCards[currentCardIndex];
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
+  const selectedDeck =
+    decks.find((deck) => deck.id === selectedDeckId) ?? null;
+  const canSaveCards = selectedDeck !== null && generatedCards.length > 0;
 
   const selectedModelLabel =
     modelOptions.find((option) => option.value === llm)?.label ?? llm;
+
+  const loadDecks = useCallback(async () => {
+    setIsLoadingDecks(true);
+    setDeckLoadError(null);
+
+    try {
+      const result = await window.AnkiAI.call<DeckListResponse>(
+        "anki.decks.list",
+        { includeCardCounts: true },
+        { timeoutMs: 5000 },
+      );
+      const nextDecks = result.decks;
+
+      setDecks(nextDecks);
+      setSelectedDeckId((previousDeckId) => {
+        if (nextDecks.some((deck) => deck.id === previousDeckId)) {
+          return previousDeckId;
+        }
+
+        return nextDecks[0]?.id ?? "";
+      });
+
+      if (nextDecks.length === 0) {
+        setDeckLoadError("No decks found in the active collection.");
+      }
+    } catch (error) {
+      setDecks([]);
+      setSelectedDeckId("");
+      setDeckLoadError(deckErrorMessage(error));
+    } finally {
+      setIsLoadingDecks(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDecks();
+  }, [loadDecks]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -103,7 +188,17 @@ export function App() {
   };
 
   const handleFinish = () => {
-    setSavedLibrary((previousCards) => [...previousCards, ...generatedCards]);
+    if (selectedDeck === null) {
+      return;
+    }
+
+    const savedCards = generatedCards.map((card) => ({
+      ...card,
+      deckId: selectedDeck.id,
+      deckName: selectedDeck.name,
+    }));
+
+    setSavedLibrary((previousCards) => [...previousCards, ...savedCards]);
     setGeneratedCards([]);
     setCurrentCardIndex(0);
   };
@@ -151,6 +246,40 @@ export function App() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                className="block text-xs font-semibold text-zinc-600"
+                htmlFor="target-deck"
+              >
+                Target Deck
+              </label>
+              <select
+                id="target-deck"
+                value={selectedDeckId}
+                onChange={(event) => setSelectedDeckId(event.target.value)}
+                disabled={isLoadingDecks || decks.length === 0}
+                className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-zinc-100 disabled:text-zinc-500"
+              >
+                {isLoadingDecks ? (
+                  <option value="">Loading decks...</option>
+                ) : null}
+                {!isLoadingDecks && decks.length === 0 ? (
+                  <option value="">No decks available</option>
+                ) : null}
+                {decks.map((deck) => (
+                  <option key={deck.id} value={deck.id}>
+                    {deckOptionLabel(deck)}
+                  </option>
+                ))}
+              </select>
+              {deckLoadError !== null ? (
+                <div className="flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">{deckLoadError}</span>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-1.5">
@@ -286,8 +415,18 @@ export function App() {
                 <h2 className="text-sm font-semibold text-zinc-800">
                   Review Cards
                 </h2>
-                <div className="text-xs font-medium text-zinc-500">
-                  {currentCardIndex + 1} / {generatedCards.length}
+                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-zinc-500">
+                  {selectedDeck !== null ? (
+                    <span
+                      className="max-w-[220px] truncate"
+                      title={selectedDeck.name}
+                    >
+                      {selectedDeck.name}
+                    </span>
+                  ) : null}
+                  <span className="shrink-0">
+                    {currentCardIndex + 1} / {generatedCards.length}
+                  </span>
                 </div>
               </div>
 
@@ -376,7 +515,8 @@ export function App() {
                 <button
                   type="button"
                   onClick={handleFinish}
-                  className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
+                  disabled={!canSaveCards}
+                  className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   Save {generatedCards.length} Cards
