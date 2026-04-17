@@ -5,9 +5,9 @@ interface inside an Anki webview. The add-on currently provides the UI shell,
 frontend build pipeline, Anki dialog integration, and a typed JSON bridge between
 the web UI and Python backend.
 
-The actual AI generation flow is not implemented yet. The current frontend
-still simulates generated cards, but reviewed cards can now be inserted into
-the active Anki collection through the webview bridge.
+Reviewed cards can be inserted into the active Anki collection through the
+webview bridge. Card generation now runs through a Claude Code task in a
+temporary workspace that produces a `cards.json` file for the review UI.
 
 ## Current State
 
@@ -20,11 +20,14 @@ the active Anki collection through the webview bridge.
 - Provides collection service infrastructure for reading deck/card snapshots,
   checking collection availability, creating/renaming decks, inserting notes as
   cards in batch, updating note fields, and moving cards between decks.
+- Provides a Claude Code-backed generation workflow that prepares a temporary
+  workspace, copies input materials into `materials/`, and validates the
+  generated `cards.json` output.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
-  selection, model selection, target deck selection, card count, simulated
-  generation, and card review/edit/discard controls.
+  selection, target deck selection, card count, live generation, and card
+  review/edit/discard controls.
 - Loads target decks from the active Anki collection through the webview bridge.
 - Saves reviewed cards into the selected Anki deck with the stock `Basic`
   note type by default.
@@ -113,15 +116,87 @@ anki.decks.ensure
 anki.decks.rename
 anki.cards.search
 anki.cards.get
+anki.generation.generateCards
 anki.cards.addToDeck
 anki.cards.updateNoteFields
 anki.cards.moveToDeck
 ```
 
 The React UI currently calls `anki.decks.list` to populate the target deck
-selector, and `anki.cards.addToDeck` to persist reviewed generated cards. The
-remaining methods are available for wiring live card data into the webview and
-sending reviewed card updates back to Anki.
+selector, `anki.generation.generateCards` to run Claude Code card generation,
+and `anki.cards.addToDeck` to persist reviewed generated cards.
+
+## Card Generation Format
+
+Card generation runs in a temporary workspace. The backend prepares a
+`materials/` directory, runs Claude Code with that workspace as the current
+directory, and expects a single `cards.json` file in the workspace root.
+
+Bridge request:
+
+```json
+{
+  "protocol": "anki-ai.transport.v1",
+  "kind": "request",
+  "id": "req-1",
+  "method": "anki.generation.generateCards",
+  "params": {
+    "sourceText": "Paste your study notes here",
+    "cardCount": 5,
+    "materials": [
+      {
+        "name": "chapter-1.md",
+        "contentBase64": "IyBDaGFwdGVyIDEKLi4u"
+      }
+    ]
+  }
+}
+```
+
+Claude Code output contract:
+
+```json
+[
+  {
+    "Front": "Question text",
+    "Back": "Answer text"
+  }
+]
+```
+
+Generation response:
+
+```json
+{
+  "protocol": "anki-ai.transport.v1",
+  "kind": "response",
+  "id": "req-1",
+  "ok": true,
+  "result": {
+    "cards": [
+      {
+        "id": "generated-1",
+        "front": "Question text",
+        "back": "Answer text"
+      }
+    ],
+    "run": {
+      "workspacePath": "/tmp/anki-ai-generation-abc123",
+      "sessionId": "..."
+    }
+  }
+}
+```
+
+Standalone generation script:
+
+```shell
+python scripts/generate_cards.py /path/to/material.pdf --card-count 10
+```
+
+The script accepts one local file path, copies it into the same Claude Code
+`materials/` workspace used by the add-on, and writes a JSON array of
+`{"Front", "Back"}` card objects to `/path/to/material.pdf.json`.
 
 ## Batch Card Insert Format
 
@@ -267,6 +342,6 @@ registers its menu item regardless of this value.
 
 ## Known Gaps
 
-- No LLM provider integration is wired up yet.
-- Uploaded files are selected in the UI but not parsed.
-- Generated cards are simulated, not produced by a backend model.
+- The Claude generation prompt is intentionally simple and will likely need iteration.
+- Uploaded files are passed to Claude Code as workspace materials without any local preprocessing.
+- Generation runs synchronously through the current bridge request path, so there is no cancel/resume flow yet.

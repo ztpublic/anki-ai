@@ -1,0 +1,2 @@
+- add xxx to .md convert support
+- context management, split huge matierals and generate seperately

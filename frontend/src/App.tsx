@@ -33,6 +33,20 @@ type DeckListResponse = {
   decks: Deck[];
 };
 
+type GenerationMaterialPayload = {
+  name: string;
+  contentBase64: string;
+};
+
+type GenerateCardsResponse = {
+  cards: Flashcard[];
+  run: {
+    workspacePath: string;
+    sessionId?: string;
+    stopReason?: string;
+  };
+};
+
 type InsertCardPayload = {
   fields: Record<string, string>;
   tags?: string[];
@@ -66,13 +80,6 @@ type SavedFlashcard = Flashcard & {
   deckName: string;
 };
 
-const modelOptions = [
-  { value: "gpt-4o", label: "GPT-4o" },
-  { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-  { value: "claude-3-opus", label: "Claude 3 Opus" },
-  { value: "claude-3-sonnet", label: "Claude 3.5 Sonnet" },
-  { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-];
 const DECK_LOAD_RETRY_DELAY_MS = 250;
 const DECK_LOAD_MAX_ATTEMPTS = 20;
 
@@ -120,8 +127,42 @@ function saveErrorMessage(error: unknown): string {
   return "Cards could not be saved.";
 }
 
+function generationErrorMessage(error: unknown): string {
+  if (error instanceof BridgeTransportError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Cards could not be generated.";
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error(`Could not read ${file.name}.`));
+        return;
+      }
+
+      const commaIndex = result.indexOf(",");
+      resolve(commaIndex === -1 ? result : result.slice(commaIndex + 1));
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error(`Could not read ${file.name}.`));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 export function App() {
-  const [llm, setLlm] = useState("gpt-4o");
   const [inputText, setInputText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [cardCount, setCardCount] = useState(5);
@@ -138,6 +179,7 @@ export function App() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(
     null,
   );
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentCard = generatedCards[currentCardIndex];
@@ -146,9 +188,6 @@ export function App() {
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
   const canSaveCards =
     selectedDeck !== null && generatedCards.length > 0 && !isSavingCards;
-
-  const selectedModelLabel =
-    modelOptions.find((option) => option.value === llm)?.label ?? llm;
 
   useEffect(() => {
     let cancelled = false;
@@ -237,6 +276,7 @@ export function App() {
       return;
     }
 
+    setGenerationError(null);
     setSaveError(null);
     setSaveSuccessMessage(null);
     setIsGenerating(true);
@@ -244,18 +284,39 @@ export function App() {
     setCurrentCardIndex(0);
 
     await new Promise((resolve) => {
-      window.setTimeout(resolve, 2500);
+      window.setTimeout(resolve, 0);
     });
 
-    const sourceType = files.length > 0 ? "files" : "text";
-    const newCards: Flashcard[] = Array.from({ length: cardCount }, (_, index) => ({
-      id: createCardId(),
-      front: `Generated Question ${index + 1}\n\nWhat is the main concept derived from the provided ${sourceType}?`,
-      back: `Generated Answer ${index + 1}\n\nThis is a simulated response based on the ${selectedModelLabel} model's analysis of your inputs.`,
-    }));
+    try {
+      const materials = await Promise.all<GenerationMaterialPayload>(
+        files.map(async (file) => ({
+          name: file.name,
+          contentBase64: await fileToBase64(file),
+        })),
+      );
 
-    setGeneratedCards(newCards);
-    setIsGenerating(false);
+      const result = await window.AnkiAI.call<GenerateCardsResponse>(
+        "anki.generation.generateCards",
+        {
+          sourceText: inputText.trim().length > 0 ? inputText : undefined,
+          cardCount,
+          materials,
+        },
+        { timeoutMs: 300000 },
+      );
+
+      setGeneratedCards(
+        result.cards.map((card) => ({
+          id: card.id || createCardId(),
+          front: card.front,
+          back: card.back,
+        })),
+      );
+    } catch (error) {
+      setGenerationError(generationErrorMessage(error));
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleDiscard = () => {
@@ -349,27 +410,6 @@ export function App() {
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-            <div className="space-y-1.5">
-              <label
-                className="block text-xs font-semibold text-zinc-600"
-                htmlFor="model"
-              >
-                AI Model
-              </label>
-              <select
-                id="model"
-                value={llm}
-                onChange={(event) => setLlm(event.target.value)}
-                className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-              >
-                {modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div className="space-y-1.5">
               <label
                 className="block text-xs font-semibold text-zinc-600"
@@ -510,6 +550,12 @@ export function App() {
                 </>
               )}
             </button>
+            {generationError !== null ? (
+              <div className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>{generationError}</span>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -527,8 +573,8 @@ export function App() {
                 Analyzing your content...
               </h3>
               <p className="max-w-sm text-sm text-zinc-500">
-                The {selectedModelLabel} model is reading through your content
-                and identifying key concepts to create flashcards.
+                Claude Code is reading through your materials and drafting
+                flashcards for review.
               </p>
             </div>
           ) : generatedCards.length > 0 && currentCard ? (
@@ -659,8 +705,8 @@ export function App() {
                 Ready to generate
               </h3>
               <p className="max-w-sm text-sm text-zinc-500">
-                Provide source text or upload documents, adjust your settings,
-                and generate a new deck of Anki flashcards.
+                Provide source text or upload documents and generate a new deck
+                of Anki flashcards.
               </p>
               {!canGenerate ? (
                 <div className="mt-5 flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-500">
