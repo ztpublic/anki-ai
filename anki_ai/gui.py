@@ -11,6 +11,7 @@ from aqt.utils import disable_help_button, restoreGeom, saveGeom
 from aqt.webview import AnkiWebView
 
 from .collection_transport import register_collection_transport_handlers
+from .file_conversion_transport import register_file_conversion_transport_handlers
 from .generation_transport import register_generation_transport_handlers
 from .transport import TransportRouter
 
@@ -85,6 +86,7 @@ class GeneratorDialog(QDialog):
         self.web = AnkiWebView(parent=self, title=WINDOW_TITLE)
         self._transport = TransportRouter(self.web)
         register_collection_transport_handlers(self._transport, lambda: mw.col)
+        register_file_conversion_transport_handlers(self._transport)
         register_generation_transport_handlers(self._transport)
         self.web.set_bridge_command(self._transport.handle_raw_message, self)
 

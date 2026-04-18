@@ -14,7 +14,7 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 
-PROMPT = "hi"
+PROMPT = "what is your model"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

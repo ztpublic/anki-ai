@@ -20,6 +20,11 @@ temporary workspace that produces a `cards.json` file for the review UI.
 - Provides collection service infrastructure for reading deck/card snapshots,
   checking collection availability, creating/renaming decks, inserting notes as
   cards in batch, updating note fields, and moving cards between decks.
+- Provides a MarkItDown-backed file conversion service for converting attached
+  documents, spreadsheets, notebooks, archives, media, and text files into
+  markdown, including `pdf`, `docx`, `pptx`, `xlsx`, `xls`, `ipynb`, `epub`,
+  `csv`, `zip`, `txt`, `md`, `json`, `html`, `xml`, `rss`, `atom`, `msg`,
+  `jpg`, `jpeg`, `png`, `mp3`, `mp4`, `m4a`, and `wav`.
 - Provides a Claude Code-backed generation workflow that prepares a temporary
   workspace, copies input materials into `materials/`, and validates the
   generated `cards.json` output.
@@ -116,6 +121,7 @@ anki.decks.ensure
 anki.decks.rename
 anki.cards.search
 anki.cards.get
+anki.files.convertToMarkdown
 anki.generation.generateCards
 anki.cards.addToDeck
 anki.cards.updateNoteFields

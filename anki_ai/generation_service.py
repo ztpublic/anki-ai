@@ -329,7 +329,7 @@ async def _run_claude_generation_async(
     options = sdk.ClaudeAgentOptions(
         cwd=workspace_path,
         permission_mode="bypassPermissions",
-        max_turns=12,
+        max_turns=200,
         stderr=stderr_lines.append,
         extra_args={"debug-to-stderr": None},
     )

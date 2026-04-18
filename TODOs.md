@@ -1,2 +1,12 @@
 - add xxx to .md convert support
 - context management, split huge matierals and generate seperately
+- prompt templet
+  - basic front and back
+  - front back has answer and explanation
+- tools
+  - get similar cards
+- prompt fine-tuning
+  - question can be asked out of context
+  - answer should short, something the learner should memorize
+  - questions should be "knowledge", should be important, should be useful
+  - granularity should consider material length and card count
