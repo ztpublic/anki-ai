@@ -24,6 +24,7 @@ packages = ["anki_ai"]
 
 [tool.setuptools.package-data]
 anki_ai = [
+  "card_generation_prompt.md",
   "web/*.html",
   "web/assets/*",
 ]

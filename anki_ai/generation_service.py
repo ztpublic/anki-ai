@@ -58,6 +58,7 @@ class GenerationServiceError(Exception):
 ClaudeRunner = Callable[[str, Path], ClaudeRunMetadata]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
+CARD_GENERATION_PROMPT_PATH = Path(__file__).with_name("card_generation_prompt.md")
 
 
 def _default_workspace_factory() -> Path:
@@ -207,20 +208,11 @@ class ClaudeCardGenerationService:
         material_names: Sequence[str],
         card_count: int,
     ) -> str:
-        files_list = "\n".join(f"- {name}" for name in material_names)
+        material_files = "\n".join(f"- {name}" for name in material_names)
         return (
-            "Study the materials available in the ./materials directory and create "
-            f"approximately {card_count} useful Anki flashcards.\n\n"
-            "Requirements:\n"
-            "- Read only the materials in ./materials.\n"
-            "- Write exactly one output file named cards.json in the current working directory.\n"
-            '- cards.json must contain a JSON array of objects.\n'
-            '- Every object must have string fields named "Front" and "Back".\n'
-            "- Make each card concise, accurate, and useful for studying.\n"
-            "- Do not wrap the JSON in markdown fences.\n"
-            "- Do not create any other output files.\n\n"
-            "Prepared material files:\n"
-            f"{files_list}\n"
+            _load_card_generation_prompt()
+            .replace("{{target_card_count}}", str(card_count))
+            .replace("{{material_files}}", material_files)
         )
 
     def _normalize_cards(self, value: Any) -> list[GeneratedCard]:
@@ -239,18 +231,18 @@ class ClaudeCardGenerationService:
                     {"cardIndex": index},
                 )
 
-            front = item.get("Front")
-            back = item.get("Back")
+            front = item.get("Front", item.get("front"))
+            back = item.get("Back", item.get("back"))
             if not isinstance(front, str) or not front.strip():
                 raise GenerationServiceError(
                     "invalid_cards_output",
-                    'Each card must have a non-empty string field "Front".',
+                    'Each card must have a non-empty string field "Front" or "front".',
                     {"cardIndex": index},
                 )
             if not isinstance(back, str) or not back.strip():
                 raise GenerationServiceError(
                     "invalid_cards_output",
-                    'Each card must have a non-empty string field "Back".',
+                    'Each card must have a non-empty string field "Back" or "back".',
                     {"cardIndex": index},
                 )
 
@@ -311,6 +303,17 @@ class ClaudeCardGenerationService:
     @staticmethod
     def _matches_error_name(error: Exception, *names: str) -> bool:
         return any(base.__name__ in names for base in type(error).__mro__)
+
+
+def _load_card_generation_prompt() -> str:
+    try:
+        return CARD_GENERATION_PROMPT_PATH.read_text(encoding="utf-8")
+    except OSError as error:
+        raise GenerationServiceError(
+            "missing_generation_prompt",
+            "Card generation prompt template could not be read.",
+            {"path": str(CARD_GENERATION_PROMPT_PATH)},
+        ) from error
 
 
 def _run_claude_generation(prompt: str, workspace_path: Path) -> ClaudeRunMetadata:

@@ -31,7 +31,16 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
             def runner(prompt: str, workspace: Path) -> dict[str, str]:
                 self.assertEqual(workspace, workspace_path)
-                self.assertIn("approximately 3 useful Anki flashcards", prompt)
+                self.assertIn("Target card count: 3", prompt)
+                self.assertIn("Every card must test one clear knowledge point.", prompt)
+                self.assertIn("Each \"Front\" must be context-free", prompt)
+                self.assertIn("normally 3-18 words", prompt)
+                self.assertIn("Never refer to item numbers", prompt)
+                self.assertIn("Delete or rewrite any card that fails the audit.", prompt)
+                self.assertIn('Each flashcard must be a JSON object with exactly these fields:', prompt)
+                self.assertIn('- "Front": string', prompt)
+                self.assertIn("- source.txt", prompt)
+                self.assertIn("- notes.md", prompt)
                 self.assertEqual(
                     (workspace / "materials" / "source.txt").read_text(encoding="utf-8"),
                     "Important facts",
@@ -118,6 +127,30 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 service.generate_cards(source_text="Important facts")
 
         self.assertEqual(error.exception.code, "invalid_cards_output")
+
+    def test_generate_cards_accepts_lowercase_card_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                _ = prompt
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"front": "Question", "back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.generate_cards(source_text="Important facts")
+
+        self.assertEqual(
+            result["cards"],
+            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+        )
 
     def test_generate_cards_rejects_invalid_material_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
