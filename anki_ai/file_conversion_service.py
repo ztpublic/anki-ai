@@ -8,7 +8,8 @@ import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, cast
+from urllib.parse import unquote, urlparse
 
 
 class FileConversionInput(TypedDict):
@@ -60,7 +61,7 @@ def _default_workspace_factory() -> Path:
 
 def _default_converter_factory() -> MarkItDownConverter:
     module = importlib.import_module("markitdown")
-    return module.MarkItDown()
+    return cast(MarkItDownConverter, module.MarkItDown())
 
 
 class MarkItDownFileConversionService:
@@ -141,6 +142,67 @@ class MarkItDownFileConversionService:
         source_path = workspace_path / filename
         source_path.write_bytes(content)
 
+        markdown = self._convert_source(
+            source=str(source_path),
+            failure_code="file_conversion_failed",
+            failure_message=f"Could not convert {filename} to markdown.",
+            empty_message=f"{filename} did not produce any markdown output.",
+            details={
+                "fileName": filename,
+                "sourceExtension": extension,
+                "workspacePath": str(workspace_path),
+            },
+        )
+
+        return {
+            "document": {
+                "name": filename,
+                "markdown": markdown,
+                "sourceExtension": extension,
+            }
+        }
+
+    def convert_url(self, *, url: str) -> FileConversionResult:
+        normalized_url = url.strip()
+        parsed_url = urlparse(normalized_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise FileConversionServiceError(
+                "invalid_url",
+                "URL must be an absolute http or https URL.",
+                {"url": url},
+            )
+
+        filename = self._filename_from_url(normalized_url)
+        extension = Path(filename).suffix.lower()
+        markdown = self._convert_source(
+            source=normalized_url,
+            failure_code="url_conversion_failed",
+            failure_message=f"Could not convert {normalized_url} to markdown.",
+            empty_message=f"{normalized_url} did not produce any markdown output.",
+            details={
+                "url": normalized_url,
+                "fileName": filename,
+                "sourceExtension": extension,
+            },
+        )
+
+        return {
+            "document": {
+                "name": filename,
+                "markdown": markdown,
+                "sourceExtension": extension,
+            }
+        }
+
+    def _convert_source(
+        self,
+        *,
+        source: str,
+        failure_code: str,
+        failure_message: str,
+        empty_message: str,
+        details: dict[str, Any],
+    ) -> str:
         try:
             converter = self._converter_factory()
         except ModuleNotFoundError as error:
@@ -152,38 +214,22 @@ class MarkItDownFileConversionService:
             ) from error
 
         try:
-            result = converter.convert(str(source_path))
+            result = converter.convert(source)
         except Exception as error:
             raise FileConversionServiceError(
-                "file_conversion_failed",
-                f"Could not convert {filename} to markdown.",
-                {
-                    "fileName": filename,
-                    "sourceExtension": extension,
-                    "workspacePath": str(workspace_path),
-                    "error": str(error),
-                },
+                failure_code,
+                failure_message,
+                {**details, "error": str(error)},
             ) from error
 
         markdown = getattr(result, "text_content", None)
         if not isinstance(markdown, str) or not markdown.strip():
             raise FileConversionServiceError(
                 "empty_conversion_output",
-                f"{filename} did not produce any markdown output.",
-                {
-                    "fileName": filename,
-                    "sourceExtension": extension,
-                    "workspacePath": str(workspace_path),
-                },
+                empty_message,
+                details,
             )
-
-        return {
-            "document": {
-                "name": filename,
-                "markdown": markdown,
-                "sourceExtension": extension,
-            }
-        }
+        return markdown
 
     @staticmethod
     def _sanitize_filename(file: FileConversionInput) -> str:
@@ -197,3 +243,15 @@ class MarkItDownFileConversionService:
         if not sanitized:
             sanitized = "attachment.bin"
         return sanitized
+
+    @staticmethod
+    def _filename_from_url(url: str) -> str:
+        parsed_url = urlparse(url)
+        path_name = Path(unquote(parsed_url.path)).name
+        filename = path_name or "page.html"
+        suffix = Path(filename).suffix.lower()
+        if suffix not in MarkItDownFileConversionService.SUPPORTED_EXTENSIONS:
+            filename = f"{filename}.html"
+        return MarkItDownFileConversionService._sanitize_filename(
+            {"name": filename, "contentBase64": ""}
+        )

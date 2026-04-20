@@ -28,19 +28,34 @@ def request_message(
 
 class FakeFileConversionService:
     def __init__(self) -> None:
-        self.calls: list[dict[str, str]] = []
+        self.file_calls: list[dict[str, str]] = []
+        self.url_calls: list[str] = []
 
     def convert_file(
         self,
         *,
         file: dict[str, str],
     ) -> JsonObject:
-        self.calls.append(file)
+        self.file_calls.append(file)
         return {
             "document": {
                 "name": file["name"],
                 "markdown": "# Converted\n",
                 "sourceExtension": ".pdf",
+            }
+        }
+
+    def convert_url(
+        self,
+        *,
+        url: str,
+    ) -> JsonObject:
+        self.url_calls.append(url)
+        return {
+            "document": {
+                "name": "article.html",
+                "markdown": "# Converted URL\n",
+                "sourceExtension": ".html",
             }
         }
 
@@ -89,6 +104,17 @@ class ErrorFileConversionService:
             },
         )
 
+    def convert_url(
+        self,
+        *,
+        url: str,
+    ) -> JsonObject:
+        _ = url
+        raise FileConversionServiceError(
+            "url_conversion_failed",
+            "Could not convert https://example.com to markdown.",
+        )
+
 
 class FileConversionTransportHandlersTest(unittest.TestCase):
     def test_convert_to_markdown_accepts_file_payload(self) -> None:
@@ -107,10 +133,28 @@ class FileConversionTransportHandlersTest(unittest.TestCase):
         assert response is not None
         self.assertTrue(response["ok"])
         self.assertEqual(
-            service.calls,
+            service.file_calls,
             [{"name": "lecture.pdf", "contentBase64": "aGVsbG8="}],
         )
         self.assertEqual(response["result"]["document"]["name"], "lecture.pdf")
+
+    def test_convert_to_markdown_accepts_url_payload(self) -> None:
+        service = FakeFileConversionService()
+        router = TransportRouter()
+        register_file_conversion_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.files.convertToMarkdown",
+                {"url": "https://example.com/article"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(service.url_calls, ["https://example.com/article"])
+        self.assertEqual(response["result"]["document"]["name"], "article.html")
 
     def test_convert_to_markdown_requires_file_object(self) -> None:
         service = FakeFileConversionService()
@@ -119,6 +163,26 @@ class FileConversionTransportHandlersTest(unittest.TestCase):
 
         response = router.handle_raw_message(
             request_message("anki.files.convertToMarkdown", {})
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
+
+    def test_convert_to_markdown_rejects_file_and_url_together(self) -> None:
+        service = FakeFileConversionService()
+        router = TransportRouter()
+        register_file_conversion_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.files.convertToMarkdown",
+                {
+                    "file": {"name": "lecture.pdf", "contentBase64": "aGVsbG8="},
+                    "url": "https://example.com/article",
+                },
+            )
         )
 
         self.assertIsNotNone(response)

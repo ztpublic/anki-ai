@@ -111,6 +111,48 @@ class MarkItDownFileConversionServiceTest(unittest.TestCase):
         self.assertEqual(result["document"]["sourceExtension"], ".html")
         self.assertEqual(result["document"]["markdown"], "# Title\n")
 
+    def test_convert_url_passes_url_directly_to_markitdown(self) -> None:
+        class FakeMarkItDown:
+            def convert(self, source: str) -> object:
+                assert source == "https://example.com/article"
+                return SimpleNamespace(text_content="# Article\n")
+
+        service = MarkItDownFileConversionService(converter_factory=FakeMarkItDown)
+
+        result = service.convert_url(url="https://example.com/article")
+
+        self.assertEqual(
+            result,
+            {
+                "document": {
+                    "name": "article.html",
+                    "markdown": "# Article\n",
+                    "sourceExtension": ".html",
+                }
+            },
+        )
+
+    def test_convert_url_rejects_non_http_url(self) -> None:
+        service = MarkItDownFileConversionService(converter_factory=lambda: object())
+
+        with self.assertRaises(FileConversionServiceError) as error:
+            service.convert_url(url="/tmp/page.html")
+
+        self.assertEqual(error.exception.code, "invalid_url")
+
+    def test_convert_url_preserves_supported_url_extension(self) -> None:
+        class FakeMarkItDown:
+            def convert(self, source: str) -> object:
+                assert source == "https://example.com/lecture.pdf"
+                return SimpleNamespace(text_content="# Lecture\n")
+
+        service = MarkItDownFileConversionService(converter_factory=FakeMarkItDown)
+
+        result = service.convert_url(url="https://example.com/lecture.pdf")
+
+        self.assertEqual(result["document"]["name"], "lecture.pdf")
+        self.assertEqual(result["document"]["sourceExtension"], ".pdf")
+
     def test_convert_file_supports_docx(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"

@@ -34,8 +34,20 @@ class FileConversionTransportHandlers:
         )
 
     def convert_to_markdown(self, params: JsonObject) -> JsonObject:
-        file = _required_file_input(params, "file")
-        return self._run(lambda service: service.convert_file(file=file))
+        has_file = "file" in params
+        has_url = "url" in params
+        if has_file == has_url:
+            raise TransportError(
+                "invalid_params",
+                "Provide exactly one of file or url.",
+            )
+
+        if has_file:
+            file = _required_file_input(params, "file")
+            return self._run(lambda service: service.convert_file(file=file))
+
+        url = _required_url_input(params, "url")
+        return self._run(lambda service: service.convert_url(url=url))
 
     def _run(
         self,
@@ -76,3 +88,13 @@ def _required_file_input(params: JsonObject, key: str) -> FileConversionInput:
         )
 
     return {"name": name, "contentBase64": content_base64}
+
+
+def _required_url_input(params: JsonObject, key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty string.",
+        )
+    return value

@@ -17,3 +17,7 @@
   - context reserving in the reviewing phase
   - edit/re-write front
   - edit/re-write back
+
+- other card types
+  - cloze
+  - holes in picture
