@@ -18,6 +18,8 @@
   - edit/re-write front
   - edit/re-write back
 
+- auto card counts
+
 - other card types
   - cloze
   - holes in picture
