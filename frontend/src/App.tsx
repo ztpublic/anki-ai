@@ -9,6 +9,7 @@ import {
   Loader2,
   Settings,
   Sparkles,
+  Terminal,
   Trash2,
   UploadCloud,
   X,
@@ -47,6 +48,32 @@ type GenerateCardsResponse = {
   };
 };
 
+type StartGenerateCardsResponse = {
+  jobId: string;
+};
+
+type GenerationJobError = {
+  code: string;
+  message: string;
+  details?: unknown;
+};
+
+type GenerationJobEvent = {
+  jobId: string;
+  status: "started" | "log" | "succeeded" | "failed";
+  level?: "info" | "error";
+  message?: string;
+  result?: GenerateCardsResponse;
+  error?: GenerationJobError;
+};
+
+type GenerationLogEntry = {
+  id: string;
+  timestamp: string;
+  level: "info" | "error";
+  message: string;
+};
+
 type InsertCardPayload = {
   fields: Record<string, string>;
   tags?: string[];
@@ -82,6 +109,42 @@ type SavedFlashcard = Flashcard & {
 
 const DECK_LOAD_RETRY_DELAY_MS = 250;
 const DECK_LOAD_MAX_ATTEMPTS = 20;
+const SUPPORTED_ATTACHMENT_EXTENSIONS = [
+  ".atom",
+  ".csv",
+  ".docx",
+  ".epub",
+  ".htm",
+  ".html",
+  ".ipynb",
+  ".jpeg",
+  ".jpg",
+  ".json",
+  ".jsonl",
+  ".m4a",
+  ".markdown",
+  ".md",
+  ".mp3",
+  ".mp4",
+  ".msg",
+  ".pdf",
+  ".png",
+  ".pptx",
+  ".rss",
+  ".text",
+  ".txt",
+  ".wav",
+  ".xls",
+  ".xlsx",
+  ".xml",
+  ".zip",
+] as const;
+const SUPPORTED_ATTACHMENT_EXTENSION_SET = new Set<string>(
+  SUPPORTED_ATTACHMENT_EXTENSIONS,
+);
+const SUPPORTED_ATTACHMENT_ACCEPT = SUPPORTED_ATTACHMENT_EXTENSIONS.join(",");
+const SUPPORTED_ATTACHMENT_SUMMARY =
+  "PDF, Office, text, web, data, image, audio/video, ZIP";
 
 function createCardId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -131,53 +194,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function detailValueToLines(label: string, value: unknown): string[] {
-  if (value === undefined || value === null || value === "") {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    const renderedValues = value
-      .filter((item) => item !== undefined && item !== null && item !== "")
-      .map((item) =>
-        typeof item === "string" ? item : JSON.stringify(item, null, 2),
-      );
-    if (renderedValues.length === 0) {
-      return [];
-    }
-
-    return [`${label}:`, ...renderedValues.map((item) => `  ${item}`)];
-  }
-
-  if (typeof value === "object") {
-    return [`${label}: ${JSON.stringify(value, null, 2)}`];
-  }
-
-  return [`${label}: ${String(value)}`];
-}
-
-function generationErrorDetails(details: unknown): string {
-  if (!isRecord(details)) {
-    return details === undefined ? "" : String(details);
-  }
-
-  const lines = [
-    ...detailValueToLines("Workspace", details.workspacePath),
-    ...detailValueToLines("Error type", details.errorType),
-    ...detailValueToLines("Error", details.error),
-    ...detailValueToLines("Result", details.result),
-    ...detailValueToLines("Errors", details.errors),
-    ...detailValueToLines("Claude stderr", details.stderr),
-    ...detailValueToLines("Runtime", details.runtime),
-  ];
-
-  return lines.join("\n");
-}
-
 function generationErrorMessage(error: unknown): string {
   if (error instanceof BridgeTransportError) {
-    const details = generationErrorDetails(error.details);
-    return details ? `${error.message}\n\n${details}` : error.message;
+    return error.message;
   }
 
   if (error instanceof Error) {
@@ -210,6 +229,48 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function isGenerationJobEvent(value: unknown): value is GenerationJobEvent {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.jobId === "string" &&
+    typeof value.status === "string" &&
+    ["started", "log", "succeeded", "failed"].includes(value.status)
+  );
+}
+
+function generationErrorFromJob(error: GenerationJobError | undefined): string {
+  if (error?.message) {
+    return error.message;
+  }
+
+  return "Cards could not be generated.";
+}
+
+function logTimestamp(): string {
+  return new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function fileExtension(fileName: string): string {
+  const trimmedName = fileName.trim().toLowerCase();
+  const lastDotIndex = trimmedName.lastIndexOf(".");
+  if (lastDotIndex <= 0) {
+    return "";
+  }
+
+  return trimmedName.slice(lastDotIndex);
+}
+
+function isSupportedAttachmentFile(file: File): boolean {
+  return SUPPORTED_ATTACHMENT_EXTENSION_SET.has(fileExtension(file.name));
+}
+
 export function App() {
   const [inputText, setInputText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -228,14 +289,36 @@ export function App() {
     null,
   );
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationLogs, setGenerationLogs] = useState<GenerationLogEntry[]>(
+    [],
+  );
+  const [showGenerationConsole, setShowGenerationConsole] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const generationLogEndRef = useRef<HTMLDivElement>(null);
+  const activeGenerationJobIdRef = useRef<string | null>(null);
+  const acceptsGenerationEventsRef = useRef(false);
   const currentCard = generatedCards[currentCardIndex];
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
   const canSaveCards =
     selectedDeck !== null && generatedCards.length > 0 && !isSavingCards;
+
+  const appendGenerationLog = (
+    message: string,
+    level: GenerationLogEntry["level"] = "info",
+  ) => {
+    setGenerationLogs((previousLogs) => [
+      ...previousLogs,
+      {
+        id: createCardId(),
+        timestamp: logTimestamp(),
+        level,
+        message,
+      },
+    ]);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -304,11 +387,101 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    return window.AnkiAI.on<GenerationJobEvent>(
+      "anki.generation.job",
+      (event) => {
+        if (!isGenerationJobEvent(event)) {
+          return;
+        }
+
+        const activeJobId = activeGenerationJobIdRef.current;
+        if (activeJobId !== null && event.jobId !== activeJobId) {
+          return;
+        }
+        if (activeJobId === null && !acceptsGenerationEventsRef.current) {
+          return;
+        }
+
+        activeGenerationJobIdRef.current = event.jobId;
+
+        if (event.status === "started") {
+          appendGenerationLog(
+            event.message ?? "Started Claude Code card generation.",
+          );
+          return;
+        }
+
+        if (event.status === "log") {
+          if (event.message) {
+            appendGenerationLog(event.message, event.level ?? "info");
+          }
+          return;
+        }
+
+        if (event.status === "succeeded") {
+          if (!event.result) {
+            const message = "Generation finished without a result payload.";
+            appendGenerationLog(message, "error");
+            setGenerationError(message);
+            setIsGenerating(false);
+            setShowGenerationConsole(true);
+            acceptsGenerationEventsRef.current = false;
+            activeGenerationJobIdRef.current = null;
+            return;
+          }
+
+          setGeneratedCards(
+            event.result.cards.map((card) => ({
+              id: card.id || createCardId(),
+              front: card.front,
+              back: card.back,
+            })),
+          );
+          setCurrentCardIndex(0);
+          setGenerationError(null);
+          setIsGenerating(false);
+          setShowGenerationConsole(false);
+          acceptsGenerationEventsRef.current = false;
+          activeGenerationJobIdRef.current = null;
+          return;
+        }
+
+        const message = generationErrorFromJob(event.error);
+        appendGenerationLog(message, "error");
+        setGenerationError(message);
+        setIsGenerating(false);
+        setShowGenerationConsole(true);
+        acceptsGenerationEventsRef.current = false;
+        activeGenerationJobIdRef.current = null;
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    generationLogEndRef.current?.scrollIntoView({ block: "end" });
+  }, [generationLogs]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(event.target.files ?? []);
+    const supportedFiles = selectedFiles.filter(isSupportedAttachmentFile);
+    const unsupportedFiles = selectedFiles.filter(
+      (file) => !isSupportedAttachmentFile(file),
+    );
+
+    if (supportedFiles.length > 0) {
+      setFiles((previousFiles) => [...previousFiles, ...supportedFiles]);
+      setGenerationError(null);
+    }
+
+    if (unsupportedFiles.length > 0) {
+      const names = unsupportedFiles.map((file) => file.name).join(", ");
+      setGenerationError(
+        `Unsupported file type: ${names}\nSupported files: ${SUPPORTED_ATTACHMENT_SUMMARY}.`,
+      );
+    }
 
     if (selectedFiles.length > 0) {
-      setFiles((previousFiles) => [...previousFiles, ...selectedFiles]);
       event.target.value = "";
     }
   };
@@ -328,8 +501,19 @@ export function App() {
     setSaveError(null);
     setSaveSuccessMessage(null);
     setIsGenerating(true);
+    setShowGenerationConsole(true);
+    setGenerationLogs([
+      {
+        id: createCardId(),
+        timestamp: logTimestamp(),
+        level: "info",
+        message: "Preparing source materials.",
+      },
+    ]);
     setGeneratedCards([]);
     setCurrentCardIndex(0);
+    activeGenerationJobIdRef.current = null;
+    acceptsGenerationEventsRef.current = true;
 
     await new Promise((resolve) => {
       window.setTimeout(resolve, 0);
@@ -343,27 +527,24 @@ export function App() {
         })),
       );
 
-      const result = await window.AnkiAI.call<GenerateCardsResponse>(
-        "anki.generation.generateCards",
+      const result = await window.AnkiAI.call<StartGenerateCardsResponse>(
+        "anki.generation.startGenerateCards",
         {
           sourceText: inputText.trim().length > 0 ? inputText : undefined,
           cardCount,
           materials,
         },
-        { timeoutMs: 300000 },
+        { timeoutMs: 10000 },
       );
-
-      setGeneratedCards(
-        result.cards.map((card) => ({
-          id: card.id || createCardId(),
-          front: card.front,
-          back: card.back,
-        })),
-      );
+      activeGenerationJobIdRef.current = result.jobId;
+      appendGenerationLog(`Generation job ${result.jobId} is running.`);
     } catch (error) {
+      acceptsGenerationEventsRef.current = false;
+      activeGenerationJobIdRef.current = null;
       setGenerationError(generationErrorMessage(error));
-    } finally {
       setIsGenerating(false);
+      setShowGenerationConsole(true);
+      appendGenerationLog(generationErrorMessage(error), "error");
     }
   };
 
@@ -522,7 +703,7 @@ export function App() {
                   Click to upload documents
                 </span>
                 <span className="mt-0.5 text-xs text-zinc-500">
-                  PDF, TXT, DOCX, MD (max 10MB)
+                  {SUPPORTED_ATTACHMENT_SUMMARY}
                 </span>
               </button>
               <input
@@ -531,7 +712,7 @@ export function App() {
                 onChange={handleFileChange}
                 className="hidden"
                 multiple
-                accept=".pdf,.txt,.docx,.md"
+                accept={SUPPORTED_ATTACHMENT_ACCEPT}
               />
 
               {files.length > 0 ? (
@@ -584,12 +765,13 @@ export function App() {
               type="button"
               onClick={handleGenerate}
               disabled={isGenerating || !canGenerate}
+              aria-busy={isGenerating}
               className="mt-auto flex h-9 w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
             >
               {isGenerating ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  Generating...
+                  Generating
                 </>
               ) : (
                 <>
@@ -609,23 +791,54 @@ export function App() {
           </div>
         </section>
 
-        <section className="flex min-h-0 w-full flex-1 flex-col bg-zinc-50">
-          {isGenerating ? (
-            <div className="flex flex-1 flex-col items-center justify-center border-zinc-300 bg-zinc-50 p-8 text-center">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                className="relative mb-6"
-              >
-                <div className="h-16 w-16 rounded-full border-4 border-indigo-100 border-t-indigo-600" />
-              </motion.div>
-              <h3 className="mb-2 text-base font-semibold text-zinc-800">
-                Analyzing your content...
-              </h3>
-              <p className="max-w-sm text-sm text-zinc-500">
-                Claude Code is reading through your materials and drafting
-                flashcards for review.
-              </p>
+        <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col bg-zinc-50">
+          {showGenerationConsole ? (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50">
+              <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
+                <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-800">
+                  <Terminal className="h-4 w-4 shrink-0 text-zinc-500" />
+                  Agent Logs
+                </h2>
+                <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-zinc-500">
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
+                      <span>Generating</span>
+                    </>
+                  ) : generationError !== null ? (
+                    <span className="text-rose-600">Failed</span>
+                  ) : (
+                    <span>Idle</span>
+                  )}
+                </div>
+              </div>
+              <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-white p-4 font-mono text-xs leading-5 text-zinc-700">
+                {generationLogs.length === 0 ? (
+                  <div className="text-zinc-500">Waiting for logs...</div>
+                ) : (
+                  generationLogs.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={
+                        entry.level === "error"
+                          ? "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-rose-700 [overflow-wrap:anywhere]"
+                          : "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-zinc-700 [overflow-wrap:anywhere]"
+                      }
+                    >
+                      <span className="shrink-0 text-zinc-400">
+                        {entry.timestamp}
+                      </span>
+                      <span className="min-w-0 flex-1">{entry.message}</span>
+                    </div>
+                  ))
+                )}
+                {isGenerating ? (
+                  <div className="mt-1 text-indigo-600">
+                    <span className="animate-pulse">_</span>
+                  </div>
+                ) : null}
+                <div ref={generationLogEndRef} />
+              </div>
             </div>
           ) : generatedCards.length > 0 && currentCard ? (
             <div className="flex min-h-0 flex-1 flex-col">

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from anki_ai import file_conversion_service as file_conversion_module
 from anki_ai.file_conversion_service import (
     FileConversionServiceError,
     MarkItDownFileConversionService,
@@ -57,6 +59,40 @@ class MarkItDownFileConversionServiceTest(unittest.TestCase):
                 }
             ),
         )
+
+    def test_default_converter_factory_adds_bundled_paths(self) -> None:
+        original_sys_path = list(sys.path)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            vendor_dir = root / "vendor"
+            python_dir = f"python{sys.version_info.major}.{sys.version_info.minor}"
+            site_packages_dir = root / ".venv" / "lib" / python_dir / "site-packages"
+            vendor_dir.mkdir()
+            site_packages_dir.mkdir(parents=True)
+
+            fake_module = SimpleNamespace(
+                MarkItDown=lambda: SimpleNamespace(
+                    convert=lambda source: SimpleNamespace(text_content="# Notes\n")
+                )
+            )
+
+            try:
+                with (
+                    patch.object(file_conversion_module, "ADDON_VENDOR_DIR", vendor_dir),
+                    patch.object(file_conversion_module, "PROJECT_ROOT", root),
+                    patch(
+                        "anki_ai.file_conversion_service.importlib.import_module",
+                        return_value=fake_module,
+                    ),
+                ):
+                    converter = file_conversion_module._default_converter_factory()
+
+                self.assertEqual(sys.path[0], str(site_packages_dir))
+                self.assertIn(str(vendor_dir), sys.path)
+                self.assertEqual(converter.convert("notes.pdf").text_content, "# Notes\n")
+            finally:
+                sys.path[:] = original_sys_path
 
     def test_convert_file_supports_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

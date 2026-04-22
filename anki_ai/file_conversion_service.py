@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import importlib
 import re
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -53,6 +54,9 @@ class MarkItDownConverter(Protocol):
 
 ConverterFactory = Callable[[], MarkItDownConverter]
 WorkspaceFactory = Callable[[], Path]
+ADDON_DIR = Path(__file__).resolve().parent
+ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
+PROJECT_ROOT = ADDON_DIR.parent
 
 
 def _default_workspace_factory() -> Path:
@@ -60,8 +64,42 @@ def _default_workspace_factory() -> Path:
 
 
 def _default_converter_factory() -> MarkItDownConverter:
+    _bootstrap_conversion_runtime()
     module = importlib.import_module("markitdown")
     return cast(MarkItDownConverter, module.MarkItDown())
+
+
+def _bootstrap_conversion_runtime() -> None:
+    """Make bundled/local conversion dependencies visible inside Anki."""
+    _prepend_sys_path(_dependency_path_candidates())
+
+
+def _dependency_path_candidates() -> list[Path]:
+    candidates: list[Path] = []
+
+    local_venv = PROJECT_ROOT / ".venv"
+    expected_python_dir = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    for pattern in (
+        "lib/python*/site-packages",
+        "lib/python*/dist-packages",
+    ):
+        candidates.extend(
+            candidate
+            for candidate in sorted(local_venv.glob(pattern))
+            if candidate.parent.name == expected_python_dir
+        )
+
+    if ADDON_VENDOR_DIR.is_dir():
+        candidates.append(ADDON_VENDOR_DIR)
+
+    return candidates
+
+
+def _prepend_sys_path(paths: list[Path]) -> None:
+    for path in reversed([candidate for candidate in paths if candidate.is_dir()]):
+        path_text = str(path)
+        if path_text not in sys.path:
+            sys.path.insert(0, path_text)
 
 
 class MarkItDownFileConversionService:

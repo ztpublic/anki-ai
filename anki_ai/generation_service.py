@@ -13,7 +13,14 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict
+
+from .file_conversion_service import (
+    FileConversionInput,
+    FileConversionResult,
+    FileConversionServiceError,
+    MarkItDownFileConversionService,
+)
 
 
 class MaterialInput(TypedDict):
@@ -43,6 +50,15 @@ class ClaudeRunMetadata(TypedDict, total=False):
     stopReason: str
 
 
+class MaterialConverter(Protocol):
+    def convert_file(
+        self,
+        *,
+        file: FileConversionInput,
+    ) -> FileConversionResult:
+        ...
+
+
 class GenerationServiceError(Exception):
     """A domain error that can be safely surfaced to bridge callers."""
 
@@ -59,8 +75,10 @@ class GenerationServiceError(Exception):
 
 
 ClaudeRunner = Callable[[str, Path], ClaudeRunMetadata]
+GenerationLogSink = Callable[[str], None]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
+MARKDOWN_MATERIAL_EXTENSIONS = frozenset({".md", ".markdown"})
 CARD_GENERATION_PROMPT_PATH = Path(__file__).with_name("card_generation_prompt.md")
 ADDON_DIR = Path(__file__).resolve().parent
 ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
@@ -100,9 +118,15 @@ class ClaudeCardGenerationService:
         *,
         runner: ClaudeRunner | None = None,
         workspace_factory: WorkspaceFactory = _default_workspace_factory,
+        material_converter: MaterialConverter | None = None,
     ) -> None:
-        self._runner = _run_claude_generation if runner is None else runner
+        self._runner = runner
         self._workspace_factory = workspace_factory
+        self._material_converter = (
+            MarkItDownFileConversionService()
+            if material_converter is None
+            else material_converter
+        )
 
     def generate_cards(
         self,
@@ -110,6 +134,7 @@ class ClaudeCardGenerationService:
         source_text: str | None = None,
         materials: Sequence[MaterialInput] = (),
         card_count: int = DEFAULT_CARD_COUNT,
+        log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
         has_source_text = source_text is not None and bool(source_text.strip())
         if not has_source_text and not materials:
@@ -135,11 +160,7 @@ class ClaudeCardGenerationService:
             material_names.append(source_path.name)
 
         for index, material in enumerate(materials):
-            material_path = materials_dir / self._material_filename(
-                material,
-                index=index,
-                used_names=used_names,
-            )
+            filename = self._sanitize_material_filename(material, index=index)
             try:
                 content = base64.b64decode(material["contentBase64"], validate=True)
             except (ValueError, TypeError) as error:
@@ -149,8 +170,56 @@ class ClaudeCardGenerationService:
                     {"materialName": material.get("name", "")},
                 ) from error
 
-            material_path.write_bytes(content)
+            if self._is_markdown_material(filename):
+                material_path = materials_dir / self._unique_material_name(
+                    filename,
+                    used_names=used_names,
+                )
+                material_path.write_bytes(content)
+                material_names.append(material_path.name)
+                continue
+
+            converted_name = self._unique_material_name(
+                self._converted_markdown_filename(filename),
+                used_names=used_names,
+            )
+            self._log(
+                log_sink,
+                f"Converting {filename} to markdown for card generation.",
+            )
+
+            try:
+                converted = self._material_converter.convert_file(file=material)
+            except FileConversionServiceError as error:
+                self._log(
+                    log_sink,
+                    f"Failed to convert {filename} to markdown: {error.message}",
+                )
+                raise GenerationServiceError(
+                    "material_conversion_failed",
+                    f"Could not convert {filename} to markdown for card generation.",
+                    self._merge_details(
+                        error.details,
+                        {
+                            "materialName": filename,
+                            "conversionCode": error.code,
+                            "conversionMessage": error.message,
+                            "workspacePath": str(workspace_path),
+                        },
+                    ),
+                ) from error
+
+            markdown = converted["document"]["markdown"]
+            material_path = materials_dir / converted_name
+            material_path.write_text(markdown, encoding="utf-8")
             material_names.append(material_path.name)
+            self._log(
+                log_sink,
+                (
+                    f"Converted {filename} to {converted_name} "
+                    f"({len(markdown)} characters)."
+                ),
+            )
 
         prompt = self._build_prompt(
             material_names=material_names,
@@ -159,7 +228,7 @@ class ClaudeCardGenerationService:
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
         try:
-            run_metadata = self._runner(prompt, workspace_path)
+            run_metadata = self._run_claude(prompt, workspace_path, log_sink)
         except GenerationServiceError as error:
             error.details = self._merge_details(
                 error.details,
@@ -295,12 +364,11 @@ class ClaudeCardGenerationService:
 
         return cards
 
-    def _material_filename(
+    def _sanitize_material_filename(
         self,
         material: MaterialInput,
         *,
         index: int,
-        used_names: set[str],
     ) -> str:
         raw_name = material.get("name", "").strip()
         filename = Path(raw_name).name
@@ -312,7 +380,33 @@ class ClaudeCardGenerationService:
         if not sanitized:
             sanitized = f"material-{index + 1}.bin"
 
+        return sanitized
+
+    def _material_filename(
+        self,
+        material: MaterialInput,
+        *,
+        index: int,
+        used_names: set[str],
+    ) -> str:
+        sanitized = self._sanitize_material_filename(material, index=index)
         return self._unique_material_name(sanitized, used_names=used_names)
+
+    @staticmethod
+    def _is_markdown_material(filename: str) -> bool:
+        return Path(filename).suffix.lower() in MARKDOWN_MATERIAL_EXTENSIONS
+
+    @staticmethod
+    def _converted_markdown_filename(filename: str) -> str:
+        stem = Path(filename).stem
+        if not stem:
+            stem = "material"
+        return f"{stem}.md"
+
+    @staticmethod
+    def _log(log_sink: GenerationLogSink | None, message: str) -> None:
+        if log_sink is not None:
+            log_sink(message)
 
     @staticmethod
     def _unique_material_name(name: str, *, used_names: set[str]) -> str:
@@ -343,6 +437,21 @@ class ClaudeCardGenerationService:
     def _matches_error_name(error: Exception, *names: str) -> bool:
         return any(base.__name__ in names for base in type(error).__mro__)
 
+    def _run_claude(
+        self,
+        prompt: str,
+        workspace_path: Path,
+        log_sink: GenerationLogSink | None,
+    ) -> ClaudeRunMetadata:
+        if self._runner is not None:
+            return self._runner(prompt, workspace_path)
+
+        return _run_claude_generation(
+            prompt,
+            workspace_path,
+            log_sink=log_sink,
+        )
+
 
 def _load_card_generation_prompt() -> str:
     try:
@@ -355,13 +464,26 @@ def _load_card_generation_prompt() -> str:
         ) from error
 
 
-def _run_claude_generation(prompt: str, workspace_path: Path) -> ClaudeRunMetadata:
-    return asyncio.run(_run_claude_generation_async(prompt, workspace_path))
+def _run_claude_generation(
+    prompt: str,
+    workspace_path: Path,
+    *,
+    log_sink: GenerationLogSink | None = None,
+) -> ClaudeRunMetadata:
+    return asyncio.run(
+        _run_claude_generation_async(
+            prompt,
+            workspace_path,
+            log_sink=log_sink,
+        )
+    )
 
 
 async def _run_claude_generation_async(
     prompt: str,
     workspace_path: Path,
+    *,
+    log_sink: GenerationLogSink | None = None,
 ) -> ClaudeRunMetadata:
     _bootstrap_generation_runtime()
     sdk = importlib.import_module("claude_agent_sdk")
@@ -369,12 +491,17 @@ async def _run_claude_generation_async(
     stderr_lines: list[str] = []
     result_message: Any | None = None
 
+    def handle_stderr(line: str) -> None:
+        stderr_lines.append(line)
+        if log_sink is not None:
+            log_sink(line)
+
     options = sdk.ClaudeAgentOptions(
         cwd=workspace_path,
         cli_path=_configured_claude_cli_path(),
         permission_mode="bypassPermissions",
         max_turns=200,
-        stderr=stderr_lines.append,
+        stderr=handle_stderr,
         env=_generation_environment(),
         extra_args={"debug-to-stderr": None},
     )

@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
+import threading
+import uuid
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Union, cast
 
 from .generation_service import (
     ClaudeCardGenerationService,
+    GenerationResult,
     GenerationServiceError,
     MaterialInput,
 )
 from .transport import JsonObject, TransportError, TransportRouter
 
+GenerationJobOutcome = Union[GenerationResult, BaseException]
+GenerationJobOperation = Callable[[], GenerationResult]
+GenerationJobCallback = Callable[[GenerationJobOutcome], None]
+GenerationBackgroundRunner = Callable[
+    [GenerationJobOperation, GenerationJobCallback],
+    None,
+]
+GenerationEventEmitter = Callable[[str, JsonObject], None]
+
 
 def register_generation_transport_handlers(
     router: TransportRouter,
     service: ClaudeCardGenerationService | None = None,
+    *,
+    background_runner: GenerationBackgroundRunner | None = None,
+    event_emitter: GenerationEventEmitter | None = None,
 ) -> None:
     """Register generation bridge methods on a transport router."""
-    handlers = GenerationTransportHandlers(service)
+    handlers = GenerationTransportHandlers(
+        service,
+        background_runner=background_runner,
+        event_emitter=event_emitter,
+    )
     router.register("anki.generation.generateCards", handlers.generate_cards)
+    router.register("anki.generation.startGenerateCards", handlers.start_generate_cards)
 
 
 class GenerationTransportHandlers:
@@ -28,10 +48,96 @@ class GenerationTransportHandlers:
     def __init__(
         self,
         service: ClaudeCardGenerationService | None = None,
+        *,
+        background_runner: GenerationBackgroundRunner | None = None,
+        event_emitter: GenerationEventEmitter | None = None,
     ) -> None:
         self._service = ClaudeCardGenerationService() if service is None else service
+        self._background_runner = (
+            _default_background_runner
+            if background_runner is None
+            else background_runner
+        )
+        self._event_emitter = event_emitter
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
+        source_text, materials, card_count = self._generation_inputs(params)
+
+        return self._run(
+            lambda service: service.generate_cards(
+                source_text=source_text,
+                materials=materials,
+                card_count=card_count,
+            )
+        )
+
+    def start_generate_cards(self, params: JsonObject) -> JsonObject:
+        event_emitter = self._event_emitter
+        if event_emitter is None:
+            raise TransportError(
+                "generation_events_unavailable",
+                "Generation events are not available in this bridge context.",
+            )
+
+        source_text, materials, card_count = self._generation_inputs(params)
+        job_id = str(uuid.uuid4())
+
+        def emit_job(payload: JsonObject) -> None:
+            event_emitter(
+                "anki.generation.job",
+                {
+                    "jobId": job_id,
+                    **payload,
+                },
+            )
+
+        def log_sink(line: str) -> None:
+            emit_job(
+                {
+                    "status": "log",
+                    "level": "info",
+                    "message": line,
+                }
+            )
+
+        def operation() -> GenerationResult:
+            emit_job(
+                {
+                    "status": "started",
+                    "message": "Started Claude Code card generation.",
+                }
+            )
+            return self._service.generate_cards(
+                source_text=source_text,
+                materials=materials,
+                card_count=card_count,
+                log_sink=log_sink,
+            )
+
+        def on_done(outcome: GenerationJobOutcome) -> None:
+            if isinstance(outcome, BaseException):
+                emit_job(
+                    {
+                        "status": "failed",
+                        "error": _error_payload(outcome),
+                    }
+                )
+                return
+
+            emit_job(
+                {
+                    "status": "succeeded",
+                    "result": outcome,
+                }
+            )
+
+        self._background_runner(operation, on_done)
+        return {"jobId": job_id}
+
+    def _generation_inputs(
+        self,
+        params: JsonObject,
+    ) -> tuple[str | None, list[MaterialInput], int]:
         source_text = _optional_string(params, "sourceText")
         card_count = _optional_int(
             params,
@@ -48,13 +154,7 @@ class GenerationTransportHandlers:
                 "Provide sourceText or at least one item in materials.",
             )
 
-        return self._run(
-            lambda service: service.generate_cards(
-                source_text=source_text,
-                materials=materials,
-                card_count=card_count,
-            )
-        )
+        return source_text, materials, card_count
 
     def _run(
         self,
@@ -71,6 +171,36 @@ class GenerationTransportHandlers:
                 "Generation service returned a non-object payload.",
             )
         return cast(JsonObject, result)
+
+
+def _default_background_runner(
+    operation: GenerationJobOperation,
+    on_done: GenerationJobCallback,
+) -> None:
+    def run() -> None:
+        try:
+            outcome: GenerationJobOutcome = operation()
+        except BaseException as error:
+            outcome = error
+        on_done(outcome)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
+
+def _error_payload(error: BaseException) -> JsonObject:
+    if isinstance(error, TransportError):
+        return error.to_payload()
+    if isinstance(error, GenerationServiceError):
+        return TransportError(error.code, error.message, error.details).to_payload()
+    return TransportError(
+        "claude_generation_failed",
+        "Claude Code generation failed.",
+        {
+            "errorType": type(error).__name__,
+            "error": str(error),
+        },
+    ).to_payload()
 
 
 def _optional_string(params: JsonObject, key: str) -> str | None:

@@ -26,8 +26,8 @@ temporary workspace that produces a `cards.json` file for the review UI.
   `csv`, `zip`, `txt`, `md`, `json`, `html`, `xml`, `rss`, `atom`, `msg`,
   `jpg`, `jpeg`, `png`, `mp3`, `mp4`, `m4a`, and `wav`.
 - Provides a Claude Code-backed generation workflow that prepares a temporary
-  workspace, copies input materials into `materials/`, and validates the
-  generated `cards.json` output.
+  workspace, converts non-markdown attachments into markdown materials, and
+  validates the generated `cards.json` output.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
@@ -108,8 +108,9 @@ make vendor-python
 
 This is required because Anki runs add-ons with its own Python environment and
 does not install this repository's `pyproject.toml` dependencies automatically.
-The generation backend loads `claude-agent-sdk` from `anki_ai/vendor/` when it
-is present, then falls back to the repo `.venv` for local symlink development.
+The generation backend loads `claude-agent-sdk` and `markitdown[all]` from
+`anki_ai/vendor/` when present, then falls back to the repo `.venv` for local
+symlink development.
 
 Claude Code generation must also have Anthropic-compatible authentication
 available to the Anki process. Anki launched from Finder or Spotlight usually
@@ -163,23 +164,26 @@ anki.cards.search
 anki.cards.get
 anki.files.convertToMarkdown
 anki.generation.generateCards
+anki.generation.startGenerateCards
 anki.cards.addToDeck
 anki.cards.updateNoteFields
 anki.cards.moveToDeck
 ```
 
 The React UI currently calls `anki.decks.list` to populate the target deck
-selector, `anki.generation.generateCards` to run Claude Code card generation,
-and `anki.cards.addToDeck` to persist reviewed generated cards.
+selector, `anki.generation.startGenerateCards` to run Claude Code card
+generation with live log events, and `anki.cards.addToDeck` to persist reviewed
+generated cards.
 
 ## Card Generation Format
 
 Card generation runs in a temporary workspace. The backend prepares a
 `materials/` directory, writes pasted text to `materials/user_input.txt`, copies
-attached files into the same directory, runs Claude Code with that workspace as
-the current directory, and expects a single `cards.json` file in the workspace
-root. Pasted text is optional; if the user only attaches files, no
-`user_input.txt` file is created.
+markdown attachments into the same directory, converts non-markdown attachments
+to markdown files in that directory, runs Claude Code with that workspace as the
+current directory, and expects a single `cards.json` file in the workspace root.
+Pasted text is optional; if the user only attaches files, no `user_input.txt`
+file is created.
 
 Bridge request:
 

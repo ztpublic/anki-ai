@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from anki_ai.file_conversion_service import FileConversionServiceError
 from anki_ai import generation_service as generation_module
 from anki_ai.generation_service import (
     RATE_LIMIT_ERROR_CODE,
@@ -125,6 +126,156 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(
             result["cards"],
             [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+        )
+
+    def test_generate_cards_converts_non_markdown_material_to_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FakeMaterialConverter:
+                def __init__(self) -> None:
+                    self.calls: list[dict[str, str]] = []
+
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    self.calls.append(file)
+                    return {
+                        "document": {
+                            "name": "lecture.pdf",
+                            "markdown": "# Lecture\n\nConverted notes.\n",
+                            "sourceExtension": ".pdf",
+                        }
+                    }
+
+            converter = FakeMaterialConverter()
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("- lecture.md", prompt)
+                self.assertNotIn("- lecture.pdf", prompt)
+                self.assertEqual(
+                    (workspace / "materials" / "lecture.md").read_text(
+                        encoding="utf-8"
+                    ),
+                    "# Lecture\n\nConverted notes.\n",
+                )
+                self.assertFalse((workspace / "materials" / "lecture.pdf").exists())
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+                material_converter=converter,
+            )
+            logs: list[str] = []
+
+            result = service.generate_cards(
+                materials=[material_payload("lecture.pdf", b"%PDF-1.4\n")],
+                log_sink=logs.append,
+            )
+
+        self.assertEqual(
+            result["cards"],
+            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+        )
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0]["name"], "lecture.pdf")
+        self.assertEqual(
+            base64.b64decode(converter.calls[0]["contentBase64"]),
+            b"%PDF-1.4\n",
+        )
+        self.assertEqual(
+            logs,
+            [
+                "Converting lecture.pdf to markdown for card generation.",
+                "Converted lecture.pdf to lecture.md (28 characters).",
+            ],
+        )
+
+    def test_generate_cards_copies_markdown_material_without_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FailingMaterialConverter:
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    _ = file
+                    raise AssertionError("markdown material should not be converted")
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("- notes.markdown", prompt)
+                self.assertEqual(
+                    (workspace / "materials" / "notes.markdown").read_bytes(),
+                    b"# Notes\n",
+                )
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+                material_converter=FailingMaterialConverter(),
+            )
+            logs: list[str] = []
+
+            result = service.generate_cards(
+                materials=[material_payload("notes.markdown", b"# Notes\n")],
+                log_sink=logs.append,
+            )
+
+        self.assertEqual(
+            result["cards"],
+            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+        )
+        self.assertEqual(logs, [])
+
+    def test_generate_cards_surfaces_material_conversion_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FailingMaterialConverter:
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    _ = file
+                    raise FileConversionServiceError(
+                        "unsupported_file_type",
+                        "This file type is not currently supported for conversion.",
+                        {"sourceExtension": ".exe"},
+                    )
+
+            service = ClaudeCardGenerationService(
+                runner=lambda prompt, workspace: {},
+                workspace_factory=lambda: workspace_path,
+                material_converter=FailingMaterialConverter(),
+            )
+            logs: list[str] = []
+
+            with self.assertRaises(GenerationServiceError) as error:
+                service.generate_cards(
+                    materials=[material_payload("notes.exe", b"binary")],
+                    log_sink=logs.append,
+                )
+
+        self.assertEqual(error.exception.code, "material_conversion_failed")
+        assert isinstance(error.exception.details, dict)
+        self.assertEqual(
+            error.exception.details["conversionCode"],
+            "unsupported_file_type",
+        )
+        self.assertEqual(error.exception.details["materialName"], "notes.exe")
+        self.assertEqual(error.exception.details["workspacePath"], str(workspace_path))
+        self.assertEqual(
+            logs,
+            [
+                "Converting notes.exe to markdown for card generation.",
+                (
+                    "Failed to convert notes.exe to markdown: This file type is not "
+                    "currently supported for conversion."
+                ),
+            ],
         )
 
     def test_bootstrap_generation_runtime_adds_bundled_paths(self) -> None:
@@ -547,6 +698,48 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         assert isinstance(error.exception.details, dict)
         self.assertEqual(error.exception.details["result"], "Model returned invalid output")
         self.assertEqual(error.exception.details["stderr"], ["Non-rate-limit stderr detail"])
+
+    def test_run_claude_generation_streams_stderr_to_log_sink(self) -> None:
+        class FakeClaudeAgentOptions:
+            def __init__(self, **kwargs: object) -> None:
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class ResultMessage:
+            def __init__(self) -> None:
+                self.is_error = False
+                self.errors = []
+                self.result = ""
+                self.session_id = "session-1"
+                self.stop_reason = "end_turn"
+
+        async def fake_query(*, prompt: str, options: object) -> object:
+            _ = prompt
+            stderr = getattr(options, "stderr", None)
+            if callable(stderr):
+                stderr("Claude debug line")
+            yield ResultMessage()
+
+        fake_sdk = SimpleNamespace(
+            ClaudeAgentOptions=FakeClaudeAgentOptions,
+            query=fake_query,
+        )
+        log_lines: list[str] = []
+
+        with patch(
+            "anki_ai.generation_service.importlib.import_module",
+            return_value=fake_sdk,
+        ):
+            metadata = asyncio.run(
+                _run_claude_generation_async(
+                    "Prompt",
+                    Path("/tmp/fake-workspace"),
+                    log_sink=log_lines.append,
+                )
+            )
+
+        self.assertEqual(metadata["sessionId"], "session-1")
+        self.assertEqual(log_lines, ["Claude debug line"])
 
 
 if __name__ == "__main__":

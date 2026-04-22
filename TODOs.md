@@ -31,3 +31,4 @@
 - generating progress interface
 - add source file name as tag to cards
 - when saved, reset attached files
+- edit prompt tab

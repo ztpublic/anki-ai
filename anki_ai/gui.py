@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from urllib.parse import quote
+from typing import Any, Callable
 
 from aqt import mw
 from aqt.qt import QCloseEvent, QDialog, QVBoxLayout, Qt
@@ -87,7 +89,11 @@ class GeneratorDialog(QDialog):
         self._transport = TransportRouter(self.web)
         register_collection_transport_handlers(self._transport, lambda: mw.col)
         register_file_conversion_transport_handlers(self._transport)
-        register_generation_transport_handlers(self._transport)
+        register_generation_transport_handlers(
+            self._transport,
+            background_runner=_run_generation_in_background,
+            event_emitter=self._emit_transport_event,
+        )
         self.web.set_bridge_command(self._transport.handle_raw_message, self)
 
         layout = QVBoxLayout()
@@ -96,6 +102,13 @@ class GeneratorDialog(QDialog):
         self.setLayout(layout)
 
         self.web.setHtml(_frontend_html())
+
+    def _emit_transport_event(self, event: str, payload: dict[str, Any]) -> None:
+        def emit() -> None:
+            if self._transport is not None and self.web is not None:
+                self._transport.emit(event, payload)
+
+        mw.taskman.run_on_main(emit)
 
     def _cleanup(self) -> None:
         global _dialog
@@ -122,3 +135,19 @@ class GeneratorDialog(QDialog):
     def closeEvent(self, event: QCloseEvent | None) -> None:
         self._cleanup()
         super().closeEvent(event)
+
+
+def _run_generation_in_background(
+    operation: Callable[[], Any],
+    on_done: Callable[[Any | BaseException], None],
+) -> None:
+    def run() -> None:
+        try:
+            outcome: Any | BaseException = operation()
+        except BaseException as error:
+            outcome = error
+
+        mw.taskman.run_on_main(lambda: on_done(outcome))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
