@@ -32,5 +32,6 @@ anki_ai = [
 [tool.mypy]
 python_version = "3.9"
 files = ["anki_ai"]
+exclude = "anki_ai/(vendor|web)/"
 strict = true
 warn_unused_configs = true

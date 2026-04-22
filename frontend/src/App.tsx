@@ -127,9 +127,57 @@ function saveErrorMessage(error: unknown): string {
   return "Cards could not be saved.";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function detailValueToLines(label: string, value: unknown): string[] {
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    const renderedValues = value
+      .filter((item) => item !== undefined && item !== null && item !== "")
+      .map((item) =>
+        typeof item === "string" ? item : JSON.stringify(item, null, 2),
+      );
+    if (renderedValues.length === 0) {
+      return [];
+    }
+
+    return [`${label}:`, ...renderedValues.map((item) => `  ${item}`)];
+  }
+
+  if (typeof value === "object") {
+    return [`${label}: ${JSON.stringify(value, null, 2)}`];
+  }
+
+  return [`${label}: ${String(value)}`];
+}
+
+function generationErrorDetails(details: unknown): string {
+  if (!isRecord(details)) {
+    return details === undefined ? "" : String(details);
+  }
+
+  const lines = [
+    ...detailValueToLines("Workspace", details.workspacePath),
+    ...detailValueToLines("Error type", details.errorType),
+    ...detailValueToLines("Error", details.error),
+    ...detailValueToLines("Result", details.result),
+    ...detailValueToLines("Errors", details.errors),
+    ...detailValueToLines("Claude stderr", details.stderr),
+    ...detailValueToLines("Runtime", details.runtime),
+  ];
+
+  return lines.join("\n");
+}
+
 function generationErrorMessage(error: unknown): string {
   if (error instanceof BridgeTransportError) {
-    return error.message;
+    const details = generationErrorDetails(error.details);
+    return details ? `${error.message}\n\n${details}` : error.message;
   }
 
   if (error instanceof Error) {
@@ -551,9 +599,11 @@ export function App() {
               )}
             </button>
             {generationError !== null ? (
-              <div className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <span>{generationError}</span>
+                <span className="whitespace-pre-wrap break-words">
+                  {generationError}
+                </span>
               </div>
             ) : null}
           </div>

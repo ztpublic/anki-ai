@@ -6,6 +6,8 @@ __pycache__/
 *.py[cod]
 dist/
 anki_ai/web/
+anki_ai/vendor/
+anki_ai/config.local.json
 frontend/node_modules/
 .venv/
 venv/

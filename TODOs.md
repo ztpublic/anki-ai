@@ -20,6 +20,14 @@
 
 - auto card counts
 
-- other card types
+- other card types (card templates?)
   - cloze
   - holes in picture
+
+- optimize bundle size because the cc cli is very big
+  - try re-use user's cc?
+  - download on-demand?
+
+- generating progress interface
+- add source file name as tag to cards
+- when saved, reset attached files

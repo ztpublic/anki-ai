@@ -6,7 +6,10 @@ import asyncio
 import base64
 import importlib
 import json
+import os
 import re
+import shutil
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -59,6 +62,27 @@ ClaudeRunner = Callable[[str, Path], ClaudeRunMetadata]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
 CARD_GENERATION_PROMPT_PATH = Path(__file__).with_name("card_generation_prompt.md")
+ADDON_DIR = Path(__file__).resolve().parent
+ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
+PROJECT_ROOT = ADDON_DIR.parent
+ADDON_CONFIG_PATH = ADDON_DIR / "config.json"
+ADDON_LOCAL_CONFIG_PATH = ADDON_DIR / "config.local.json"
+GENERATION_ENV_CONFIG_KEYS = {
+    "anthropicApiKey": "ANTHROPIC_API_KEY",
+    "anthropicAuthToken": "ANTHROPIC_AUTH_TOKEN",
+    "anthropicBaseUrl": "ANTHROPIC_BASE_URL",
+    "anthropicModel": "ANTHROPIC_MODEL",
+    "claudeCodeOAuthToken": "CLAUDE_CODE_OAUTH_TOKEN",
+    "claudeConfigDir": "CLAUDE_CONFIG_DIR",
+    "claudeCodeUseBedrock": "CLAUDE_CODE_USE_BEDROCK",
+    "awsProfile": "AWS_PROFILE",
+    "awsRegion": "AWS_REGION",
+    "awsDefaultRegion": "AWS_DEFAULT_REGION",
+    "httpProxy": "HTTP_PROXY",
+    "httpsProxy": "HTTPS_PROXY",
+    "noProxy": "NO_PROXY",
+}
+GENERATION_ENV_KEYS = tuple(GENERATION_ENV_CONFIG_KEYS.values())
 
 
 def _default_workspace_factory() -> Path:
@@ -104,7 +128,7 @@ class ClaudeCardGenerationService:
         used_names: set[str] = set()
         if has_source_text and source_text is not None:
             source_path = materials_dir / self._unique_material_name(
-                "source.txt",
+                "user_input.txt",
                 used_names=used_names,
             )
             source_path.write_text(source_text, encoding="utf-8")
@@ -147,7 +171,12 @@ class ClaudeCardGenerationService:
                 raise GenerationServiceError(
                     "claude_cli_not_found",
                     "Claude Code CLI is not available in the current environment.",
-                    {"workspacePath": str(workspace_path)},
+                    {
+                        "workspacePath": str(workspace_path),
+                        "errorType": type(error).__name__,
+                        "error": str(error),
+                        "runtime": _runtime_diagnostics(),
+                    },
                 ) from error
             if self._matches_error_name(
                 error,
@@ -158,12 +187,22 @@ class ClaudeCardGenerationService:
                 raise GenerationServiceError(
                     "claude_generation_failed",
                     "Claude Code generation failed.",
-                    {"workspacePath": str(workspace_path), "error": str(error)},
+                    {
+                        "workspacePath": str(workspace_path),
+                        "errorType": type(error).__name__,
+                        "error": str(error),
+                        "runtime": _runtime_diagnostics(),
+                    },
                 ) from error
             raise GenerationServiceError(
                 "claude_generation_failed",
                 "Claude Code generation failed.",
-                {"workspacePath": str(workspace_path), "error": str(error)},
+                {
+                    "workspacePath": str(workspace_path),
+                    "errorType": type(error).__name__,
+                    "error": str(error),
+                    "runtime": _runtime_diagnostics(),
+                },
             ) from error
 
         if "sessionId" in run_metadata:
@@ -324,6 +363,7 @@ async def _run_claude_generation_async(
     prompt: str,
     workspace_path: Path,
 ) -> ClaudeRunMetadata:
+    _bootstrap_generation_runtime()
     sdk = importlib.import_module("claude_agent_sdk")
 
     stderr_lines: list[str] = []
@@ -331,9 +371,11 @@ async def _run_claude_generation_async(
 
     options = sdk.ClaudeAgentOptions(
         cwd=workspace_path,
+        cli_path=_configured_claude_cli_path(),
         permission_mode="bypassPermissions",
         max_turns=200,
         stderr=stderr_lines.append,
+        env=_generation_environment(),
         extra_args={"debug-to-stderr": None},
     )
 
@@ -348,6 +390,7 @@ async def _run_claude_generation_async(
         )
         raise _claude_failure_error(
             details=details,
+            auth_missing=_looks_auth_missing(error, stderr_lines),
             rate_limited=_looks_rate_limited(error, stderr_lines),
             default_message="Claude Code generation failed.",
         ) from error
@@ -363,6 +406,11 @@ async def _run_claude_generation_async(
         )
         raise _claude_failure_error(
             details=details,
+            auth_missing=_looks_auth_missing(
+                result_message.errors,
+                getattr(result_message, "result", None),
+                stderr_lines,
+            ),
             rate_limited=_looks_rate_limited(
                 result_message.errors,
                 getattr(result_message, "result", None),
@@ -388,6 +436,7 @@ def _claude_failure_details(
 ) -> dict[str, Any] | None:
     details: dict[str, Any] = {}
     if error is not None:
+        details["errorType"] = type(error).__name__
         details["error"] = str(error)
     if errors:
         details["errors"] = errors
@@ -395,15 +444,285 @@ def _claude_failure_details(
         details["result"] = result
     if stderr_lines:
         details["stderr"] = list(stderr_lines[-40:])
+    details["runtime"] = _runtime_diagnostics()
     return details or None
+
+
+def _runtime_diagnostics() -> dict[str, Any]:
+    path_value = os.environ.get("PATH", "")
+    env_keys_to_report = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "AWS_PROFILE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+    )
+    return {
+        "pythonExecutable": sys.executable,
+        "processCwd": os.getcwd(),
+        "claudePath": shutil.which("claude"),
+        "configuredClaudePath": str(_configured_claude_cli_path() or ""),
+        "nodePath": shutil.which("node"),
+        "pathEntries": [entry for entry in path_value.split(os.pathsep) if entry],
+        "envKeysPresent": [
+            key for key in env_keys_to_report if os.environ.get(key)
+        ],
+        "configuredEnvKeysPresent": sorted(_generation_environment().keys()),
+    }
+
+
+def _bootstrap_generation_runtime() -> None:
+    """Make bundled/local generation dependencies visible inside Anki."""
+    _prepend_sys_path(_dependency_path_candidates())
+    _prepend_process_path(_cli_path_candidates())
+
+
+def _dependency_path_candidates() -> list[Path]:
+    candidates: list[Path] = []
+
+    if ADDON_VENDOR_DIR.is_dir():
+        candidates.append(ADDON_VENDOR_DIR)
+
+    local_venv = PROJECT_ROOT / ".venv"
+    expected_python_dir = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    for pattern in (
+        "lib/python*/site-packages",
+        "lib/python*/dist-packages",
+    ):
+        candidates.extend(
+            candidate
+            for candidate in sorted(local_venv.glob(pattern))
+            if candidate.parent.name == expected_python_dir
+        )
+
+    return candidates
+
+
+def _cli_path_candidates() -> list[Path]:
+    home = Path.home()
+    return [
+        home / ".local" / "bin",
+        home / ".claude" / "local",
+        home / ".npm-global" / "bin",
+        home / ".yarn" / "bin",
+        home / ".cargo" / "bin",
+        Path("/opt/homebrew/opt/node@20/bin"),
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+    ]
+
+
+def _prepend_sys_path(paths: Sequence[Path]) -> None:
+    for path in reversed([candidate for candidate in paths if candidate.is_dir()]):
+        path_text = str(path)
+        if path_text not in sys.path:
+            sys.path.insert(0, path_text)
+
+
+def _prepend_process_path(paths: Sequence[Path]) -> None:
+    current_entries = [
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry
+    ]
+    current_entry_set = set(current_entries)
+    next_entries = [
+        str(path)
+        for path in paths
+        if path.is_dir() and str(path) not in current_entry_set
+    ]
+    if not next_entries:
+        return
+
+    os.environ["PATH"] = os.pathsep.join([*next_entries, *current_entries])
+
+
+def _generation_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+
+    for key in GENERATION_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+
+    shell_env = _load_shell_generation_environment()
+    for key, value in shell_env.items():
+        if key not in env and value:
+            env[key] = value
+
+    config = _generation_config()
+    for config_key, env_key in GENERATION_ENV_CONFIG_KEYS.items():
+        value = config.get(config_key)
+        if isinstance(value, str) and value.strip():
+            env[env_key] = value.strip()
+
+    return env
+
+
+def _load_shell_generation_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for path in _shell_env_file_candidates():
+        env.update(_read_shell_generation_environment(path))
+    return env
+
+
+def _shell_env_file_candidates() -> list[Path]:
+    home = Path.home()
+    return [
+        home / ".zshenv",
+        home / ".zprofile",
+        home / ".zshrc",
+        home / ".profile",
+        home / ".bash_profile",
+        home / ".bashrc",
+    ]
+
+
+def _read_shell_generation_environment(path: Path) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+
+    env: dict[str, str] = {}
+    allowed_keys = set(GENERATION_ENV_KEYS)
+    for line in lines:
+        parsed = _parse_shell_env_assignment(line)
+        if parsed is None:
+            continue
+
+        key, value = parsed
+        if key in allowed_keys and value:
+            env[key] = value
+
+    return env
+
+
+def _parse_shell_env_assignment(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+
+    if stripped.startswith("export "):
+        stripped = stripped[len("export ") :].strip()
+
+    if "=" not in stripped:
+        return None
+
+    key, raw_value = stripped.split("=", 1)
+    key = key.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        return None
+
+    value = _strip_shell_comment(raw_value.strip())
+    return key, _unquote_shell_value(value.strip())
+
+
+def _strip_shell_comment(value: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+            continue
+        if char == "#":
+            return value[:index].rstrip()
+    return value
+
+
+def _unquote_shell_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    return value.replace(r"\'", "'").replace(r'\"', '"')
+
+
+def _configured_claude_cli_path() -> str | None:
+    configured = _generation_config().get("claudeCliPath")
+    if isinstance(configured, str) and configured.strip():
+        return str(Path(configured).expanduser())
+
+    discovered = shutil.which("claude")
+    return discovered if discovered else None
+
+
+def _generation_config() -> dict[str, Any]:
+    raw_config = _load_generation_config()
+    generation_config = raw_config.get("generation")
+    if isinstance(generation_config, dict):
+        merged = dict(raw_config)
+        merged.update(generation_config)
+        return merged
+    return raw_config
+
+
+def _load_generation_config() -> dict[str, Any]:
+    override_path = os.environ.get("ANKI_AI_CONFIG_PATH")
+    if override_path:
+        return _read_config_file(Path(override_path))
+
+    config = _read_config_file(ADDON_CONFIG_PATH)
+    local_config = _read_config_file(ADDON_LOCAL_CONFIG_PATH)
+    if local_config:
+        config = _merge_config(config, local_config)
+    return config
+
+
+def _read_config_file(config_path: Path) -> dict[str, Any]:
+    try:
+        parsed = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            nested = dict(merged[key])
+            nested.update(value)
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
 
 
 def _claude_failure_error(
     *,
     details: dict[str, Any] | None,
+    auth_missing: bool = False,
     rate_limited: bool,
     default_message: str,
 ) -> GenerationServiceError:
+    if auth_missing:
+        return GenerationServiceError(
+            "claude_auth_missing",
+            (
+                "Claude Code authentication is not configured for Anki. "
+                "Set generation.anthropicAuthToken or generation.anthropicApiKey "
+                "in the add-on config, define ANTHROPIC_AUTH_TOKEN or "
+                "ANTHROPIC_API_KEY as a simple export in your shell startup file, "
+                "or launch Anki from an environment that provides one of those "
+                "variables."
+            ),
+            details,
+        )
     if rate_limited:
         return GenerationServiceError(
             RATE_LIMIT_ERROR_CODE,
@@ -428,6 +747,21 @@ def _looks_rate_limited(*values: Any) -> bool:
             or "rate_limit" in lowered
             or "rate limit" in lowered
             or "速率限制" in serialized
+        ):
+            return True
+    return False
+
+
+def _looks_auth_missing(*values: Any) -> bool:
+    for value in values:
+        if value is None:
+            continue
+        lowered = _serialize_detail_value(value).lower()
+        if (
+            "could not resolve authentication method" in lowered
+            or "auth error: no api key available" in lowered
+            or "expected either apikey or authtoken" in lowered
+            or "no api key available" in lowered
         ):
             return True
     return False

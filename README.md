@@ -57,6 +57,7 @@ Generated paths:
 
 ```text
 anki_ai/web/          Vite build output consumed by the add-on
+anki_ai/vendor/       Bundled Python runtime dependencies for Anki
 dist/                 Packaged .ankiaddon archive output
 frontend/node_modules/
 ```
@@ -99,6 +100,45 @@ Build the frontend assets into the add-on package:
 make frontend-build
 ```
 
+Bundle Python runtime dependencies into the add-on package:
+
+```shell
+make vendor-python
+```
+
+This is required because Anki runs add-ons with its own Python environment and
+does not install this repository's `pyproject.toml` dependencies automatically.
+The generation backend loads `claude-agent-sdk` from `anki_ai/vendor/` when it
+is present, then falls back to the repo `.venv` for local symlink development.
+
+Claude Code generation must also have Anthropic-compatible authentication
+available to the Anki process. Anki launched from Finder or Spotlight usually
+does not inherit shell environment variables, so a terminal setup that works for
+`claude` may still be invisible to the add-on. For custom providers, set the
+values under `generation` in Anki's add-on config or in an ignored
+`anki_ai/config.local.json`, for example:
+
+```json
+{
+  "generation": {
+    "anthropicAuthToken": "",
+    "anthropicBaseUrl": "https://api.example.com",
+    "anthropicModel": "provider-model-name",
+    "claudeCliPath": "/Users/you/.local/bin/claude"
+  }
+}
+```
+
+`anthropicAuthToken` maps to `ANTHROPIC_AUTH_TOKEN`; alternatively use
+`anthropicApiKey` for `ANTHROPIC_API_KEY`. Leave secrets out of commits and set
+them only in your local add-on configuration.
+
+As a convenience for local development, the add-on also reads simple
+`export KEY=value` or `KEY=value` assignments for the same keys from common shell
+startup files such as `~/.zshrc`, `~/.zprofile`, and `~/.zshenv`. It does not
+execute those files, so computed values or assignments hidden behind shell
+conditionals should go in `config.local.json` instead.
+
 For frontend-only iteration in a browser, you can run:
 
 ```shell
@@ -135,8 +175,11 @@ and `anki.cards.addToDeck` to persist reviewed generated cards.
 ## Card Generation Format
 
 Card generation runs in a temporary workspace. The backend prepares a
-`materials/` directory, runs Claude Code with that workspace as the current
-directory, and expects a single `cards.json` file in the workspace root.
+`materials/` directory, writes pasted text to `materials/user_input.txt`, copies
+attached files into the same directory, runs Claude Code with that workspace as
+the current directory, and expects a single `cards.json` file in the workspace
+root. Pasted text is optional; if the user only attaches files, no
+`user_input.txt` file is created.
 
 Bridge request:
 
@@ -331,10 +374,10 @@ Build a distributable add-on archive:
 make package
 ```
 
-The package target builds the React frontend first, then writes
-`dist/anki_ai.ankiaddon`. The archive contents are rooted at the add-on files
-themselves, as required by Anki, rather than inside an extra `anki_ai/` parent
-directory.
+The package target builds the React frontend, vendors the Python runtime
+dependencies, then writes `dist/anki_ai.ankiaddon`. The archive contents are
+rooted at the add-on files themselves, as required by Anki, rather than inside an
+extra `anki_ai/` parent directory.
 
 ## Configuration
 
