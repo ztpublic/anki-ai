@@ -4,7 +4,7 @@ import json
 import unittest
 from collections.abc import Callable
 
-from anki_ai.generation_service import GenerationServiceError
+from anki_ai.generation_service import GenerationLogEvent, GenerationServiceError
 from anki_ai.generation_transport import register_generation_transport_handlers
 from anki_ai.transport import PROTOCOL, JsonObject, TransportRouter
 
@@ -36,10 +36,17 @@ class FakeGenerationService:
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
         card_type: str = "basic",
-        log_sink: Callable[[str], None] | None = None,
+        log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         if log_sink is not None:
-            log_sink("Claude stderr line")
+            log_sink(
+                {
+                    "level": "info",
+                    "source": "llm",
+                    "role": "LLM -> Claude Code",
+                    "message": "LLM -> Claude Code: draft cards",
+                }
+            )
         self.calls.append(
             {
                 "source_text": source_text,
@@ -69,7 +76,7 @@ class RateLimitedGenerationService:
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
         card_type: str = "basic",
-        log_sink: Callable[[str], None] | None = None,
+        log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         _ = source_text
         _ = materials
@@ -258,7 +265,9 @@ class GenerationTransportHandlersTest(unittest.TestCase):
             ["started", "log", "succeeded"],
         )
         self.assertTrue(all(payload["jobId"] == job_id for _, payload in events))
-        self.assertEqual(events[1][1]["message"], "Claude stderr line")
+        self.assertEqual(events[1][1]["message"], "LLM -> Claude Code: draft cards")
+        self.assertEqual(events[1][1]["source"], "llm")
+        self.assertEqual(events[1][1]["role"], "LLM -> Claude Code")
         self.assertEqual(events[2][1]["result"]["cards"][0]["front"], "Front")
 
     def test_start_generate_cards_reports_event_unavailable_without_emitter(

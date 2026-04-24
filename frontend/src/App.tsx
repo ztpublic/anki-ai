@@ -80,7 +80,9 @@ type GenerationJobError = {
 type GenerationJobEvent = {
   jobId: string;
   status: "started" | "log" | "succeeded" | "failed";
-  level?: "info" | "error";
+  level?: "debug" | "info" | "warning" | "error";
+  source?: "app" | "claude" | "llm";
+  role?: string;
   message?: string;
   result?: GenerateCardsResponse;
   error?: GenerationJobError;
@@ -89,7 +91,7 @@ type GenerationJobEvent = {
 type GenerationLogEntry = {
   id: string;
   timestamp: string;
-  level: "info" | "error";
+  level: "debug" | "info" | "warning" | "error";
   message: string;
 };
 
@@ -927,7 +929,7 @@ export function App() {
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
                 <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-800">
                   <Terminal className="h-4 w-4 shrink-0 text-zinc-500" />
-                  Agent Logs
+                  LLM Messages
                 </h2>
                 <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-zinc-500">
                   {isGenerating ? (
@@ -952,7 +954,9 @@ export function App() {
                       className={
                         entry.level === "error"
                           ? "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-rose-700 [overflow-wrap:anywhere]"
-                          : "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-zinc-700 [overflow-wrap:anywhere]"
+                          : entry.level === "warning"
+                            ? "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-amber-700 [overflow-wrap:anywhere]"
+                            : "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-zinc-700 [overflow-wrap:anywhere]"
                       }
                     >
                       <span className="shrink-0 text-zinc-400">

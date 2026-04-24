@@ -48,4 +48,4 @@
 
 - markdown to html post processing?
 
-- add prompt template library
+- abort generation button

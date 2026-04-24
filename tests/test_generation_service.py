@@ -16,6 +16,7 @@ from anki_ai import generation_service as generation_module
 from anki_ai.generation_service import (
     RATE_LIMIT_ERROR_CODE,
     ClaudeCardGenerationService,
+    GenerationLogEvent,
     GenerationServiceError,
     _generation_environment,
     _run_claude_generation_async,
@@ -27,6 +28,10 @@ def material_payload(name: str, content: bytes) -> dict[str, str]:
         "name": name,
         "contentBase64": base64.b64encode(content).decode("ascii"),
     }
+
+
+def log_messages(logs: list[GenerationLogEvent]) -> list[str]:
+    return [log["message"] for log in logs]
 
 
 class ClaudeCardGenerationServiceTest(unittest.TestCase):
@@ -189,7 +194,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 workspace_factory=lambda: workspace_path,
                 material_converter=converter,
             )
-            logs: list[str] = []
+            logs: list[GenerationLogEvent] = []
 
             result = service.generate_cards(
                 materials=[material_payload("lecture.pdf", b"%PDF-1.4\n")],
@@ -214,7 +219,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             b"%PDF-1.4\n",
         )
         self.assertEqual(
-            logs,
+            log_messages(logs),
             [
                 "Converting lecture.pdf to markdown for card generation.",
                 "Converted lecture.pdf to lecture.md (28 characters).",
@@ -247,7 +252,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 workspace_factory=lambda: workspace_path,
                 material_converter=FailingMaterialConverter(),
             )
-            logs: list[str] = []
+            logs: list[GenerationLogEvent] = []
 
             result = service.generate_cards(
                 materials=[material_payload("notes.markdown", b"# Notes\n")],
@@ -285,7 +290,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 workspace_factory=lambda: workspace_path,
                 material_converter=FailingMaterialConverter(),
             )
-            logs: list[str] = []
+            logs: list[GenerationLogEvent] = []
 
             with self.assertRaises(GenerationServiceError) as error:
                 service.generate_cards(
@@ -302,7 +307,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(error.exception.details["materialName"], "notes.exe")
         self.assertEqual(error.exception.details["workspacePath"], str(workspace_path))
         self.assertEqual(
-            logs,
+            log_messages(logs),
             [
                 "Converting notes.exe to markdown for card generation.",
                 (
@@ -815,7 +820,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(error.exception.details["result"], "Model returned invalid output")
         self.assertEqual(error.exception.details["stderr"], ["Non-rate-limit stderr detail"])
 
-    def test_run_claude_generation_streams_stderr_to_log_sink(self) -> None:
+    def test_run_claude_generation_filters_stderr_below_error(self) -> None:
         class FakeClaudeAgentOptions:
             def __init__(self, **kwargs: object) -> None:
                 for key, value in kwargs.items():
@@ -833,14 +838,15 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             _ = prompt
             stderr = getattr(options, "stderr", None)
             if callable(stderr):
-                stderr("Claude debug line")
+                stderr("[DEBUG] Claude debug line")
+                stderr("[ERROR] Claude error line")
             yield ResultMessage()
 
         fake_sdk = SimpleNamespace(
             ClaudeAgentOptions=FakeClaudeAgentOptions,
             query=fake_query,
         )
-        log_lines: list[str] = []
+        logs: list[GenerationLogEvent] = []
 
         with patch(
             "anki_ai.generation_service.importlib.import_module",
@@ -850,12 +856,85 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 _run_claude_generation_async(
                     "Prompt",
                     Path("/tmp/fake-workspace"),
-                    log_sink=log_lines.append,
+                    log_sink=logs.append,
                 )
             )
 
         self.assertEqual(metadata["sessionId"], "session-1")
-        self.assertEqual(log_lines, ["Claude debug line"])
+        self.assertEqual(log_messages(logs), ["[ERROR] Claude error line"])
+        self.assertEqual(logs[0]["source"], "claude")
+        self.assertEqual(logs[0]["level"], "error")
+
+    def test_run_claude_generation_streams_llm_messages_to_log_sink(self) -> None:
+        class FakeClaudeAgentOptions:
+            def __init__(self, **kwargs: object) -> None:
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class TextBlock:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+        class ToolUseBlock:
+            def __init__(self) -> None:
+                self.name = "Write"
+                self.input = {"file_path": "cards.json"}
+
+        class UserMessage:
+            def __init__(self) -> None:
+                self.content = "Material summary"
+
+        class AssistantMessage:
+            def __init__(self) -> None:
+                self.content = [
+                    TextBlock("I will write cards."),
+                    ToolUseBlock(),
+                ]
+                self.error = None
+
+        class ResultMessage:
+            def __init__(self) -> None:
+                self.is_error = False
+                self.errors = []
+                self.result = ""
+                self.session_id = "session-1"
+                self.stop_reason = "end_turn"
+
+        async def fake_query(*, prompt: str, options: object) -> object:
+            _ = prompt
+            _ = options
+            yield UserMessage()
+            yield AssistantMessage()
+            yield ResultMessage()
+
+        fake_sdk = SimpleNamespace(
+            ClaudeAgentOptions=FakeClaudeAgentOptions,
+            query=fake_query,
+        )
+        logs: list[GenerationLogEvent] = []
+
+        with patch(
+            "anki_ai.generation_service.importlib.import_module",
+            return_value=fake_sdk,
+        ):
+            metadata = asyncio.run(
+                _run_claude_generation_async(
+                    "Prompt",
+                    Path("/tmp/fake-workspace"),
+                    log_sink=logs.append,
+                )
+            )
+
+        self.assertEqual(metadata["sessionId"], "session-1")
+        self.assertEqual(
+            log_messages(logs),
+            [
+                "Claude Code -> LLM: Material summary",
+                "LLM -> Claude Code: I will write cards.",
+                'LLM -> Claude Code tool request: Write {"file_path": "cards.json"}',
+            ],
+        )
+        self.assertTrue(all(log["source"] == "llm" for log in logs))
 
 
 if __name__ == "__main__":

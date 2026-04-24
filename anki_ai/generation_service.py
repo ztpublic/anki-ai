@@ -13,7 +13,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from .card_generation_workflows import (
     CardGenerationWorkflowError,
@@ -54,6 +54,17 @@ class ClaudeRunMetadata(TypedDict, total=False):
     stopReason: str
 
 
+GenerationLogLevel = Literal["debug", "info", "warning", "error"]
+GenerationLogSource = Literal["app", "claude", "llm"]
+
+
+class GenerationLogEvent(TypedDict, total=False):
+    level: GenerationLogLevel
+    source: GenerationLogSource
+    role: str
+    message: str
+
+
 class MaterialConverter(Protocol):
     def convert_file(
         self,
@@ -79,9 +90,21 @@ class GenerationServiceError(Exception):
 
 
 ClaudeRunner = Callable[[str, Path], ClaudeRunMetadata]
-GenerationLogSink = Callable[[str], None]
+GenerationLogSink = Callable[[GenerationLogEvent], None]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
+LOG_LEVEL_RANKS = {
+    "trace": 0,
+    "debug": 10,
+    "info": 20,
+    "notice": 25,
+    "warn": 30,
+    "warning": 30,
+    "error": 40,
+    "fatal": 50,
+    "critical": 50,
+}
+MAX_GENERATION_LOG_MESSAGE_LENGTH = 4000
 MARKDOWN_MATERIAL_EXTENSIONS = frozenset({".md", ".markdown"})
 ADDON_DIR = Path(__file__).resolve().parent
 ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
@@ -391,8 +414,7 @@ class ClaudeCardGenerationService:
 
     @staticmethod
     def _log(log_sink: GenerationLogSink | None, message: str) -> None:
-        if log_sink is not None:
-            log_sink(message)
+        _emit_generation_log(log_sink, message, source="app")
 
     @staticmethod
     def _unique_material_name(name: str, *, used_names: set[str]) -> str:
@@ -468,8 +490,14 @@ async def _run_claude_generation_async(
 
     def handle_stderr(line: str) -> None:
         stderr_lines.append(line)
-        if log_sink is not None:
-            log_sink(line)
+        if _stderr_log_rank(line) >= LOG_LEVEL_RANKS["error"]:
+            _emit_generation_log(
+                log_sink,
+                line,
+                level="error",
+                source="claude",
+                role="Claude Code",
+            )
 
     options = sdk.ClaudeAgentOptions(
         cwd=workspace_path,
@@ -483,6 +511,7 @@ async def _run_claude_generation_async(
 
     try:
         async for message in sdk.query(prompt=prompt, options=options):
+            _emit_claude_message_logs(log_sink, message)
             if type(message).__name__ == "ResultMessage":
                 result_message = message
     except Exception as error:
@@ -527,6 +556,184 @@ async def _run_claude_generation_async(
     if result_message.stop_reason:
         metadata["stopReason"] = result_message.stop_reason
     return metadata
+
+
+def _emit_generation_log(
+    log_sink: GenerationLogSink | None,
+    message: str,
+    *,
+    level: GenerationLogLevel = "info",
+    source: GenerationLogSource = "app",
+    role: str | None = None,
+) -> None:
+    if log_sink is None:
+        return
+
+    event: GenerationLogEvent = {
+        "level": level,
+        "source": source,
+        "message": _truncate_generation_log_message(message),
+    }
+    if role is not None:
+        event["role"] = role
+    log_sink(event)
+
+
+def _emit_claude_message_logs(
+    log_sink: GenerationLogSink | None,
+    message: Any,
+) -> None:
+    if log_sink is None:
+        return
+
+    message_type = type(message).__name__
+    if message_type == "UserMessage":
+        for log_message in _content_messages(
+            getattr(message, "content", None),
+            role="Claude Code -> LLM",
+        ):
+            _emit_generation_log(
+                log_sink,
+                log_message,
+                source="llm",
+                role="Claude Code -> LLM",
+            )
+        return
+
+    if message_type == "AssistantMessage":
+        error = getattr(message, "error", None)
+        if error:
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Claude Code error: {error}",
+                level="error",
+                source="llm",
+                role="LLM -> Claude Code",
+            )
+
+        for log_message in _content_messages(
+            getattr(message, "content", None),
+            role="LLM -> Claude Code",
+        ):
+            _emit_generation_log(
+                log_sink,
+                log_message,
+                source="llm",
+                role="LLM -> Claude Code",
+            )
+
+
+def _content_messages(content: Any, *, role: str) -> list[str]:
+    if isinstance(content, str):
+        text = content.strip()
+        return [f"{role}: {text}"] if text else []
+
+    if not isinstance(content, list):
+        return []
+
+    messages: list[str] = []
+    for block in content:
+        block_message = _content_block_message(block, role=role)
+        if block_message is not None:
+            messages.append(block_message)
+    return messages
+
+
+def _content_block_message(block: Any, *, role: str) -> str | None:
+    block_type = type(block).__name__
+
+    text = getattr(block, "text", None)
+    if isinstance(text, str) and text.strip():
+        return f"{role}: {text.strip()}"
+
+    if block_type == "ThinkingBlock":
+        return f"{role}: [thinking block received]"
+
+    tool_name = getattr(block, "name", None)
+    tool_input = getattr(block, "input", None)
+    if isinstance(tool_name, str):
+        suffix = f" {_compact_json(tool_input)}" if tool_input is not None else ""
+        return f"{role} tool request: {tool_name}{suffix}"
+
+    tool_use_id = getattr(block, "tool_use_id", None)
+    tool_content = getattr(block, "content", None)
+    is_error = getattr(block, "is_error", None)
+    if tool_use_id is not None or tool_content is not None or is_error is not None:
+        state = " error" if is_error else ""
+        identifier = f" {tool_use_id}" if tool_use_id else ""
+        summary = _compact_json(tool_content) if tool_content is not None else ""
+        return f"{role} tool result{state}{identifier}: {summary}".rstrip()
+
+    return None
+
+
+def _compact_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _truncate_generation_log_message(message: str) -> str:
+    if len(message) <= MAX_GENERATION_LOG_MESSAGE_LENGTH:
+        return message
+    return f"{message[:MAX_GENERATION_LOG_MESSAGE_LENGTH]}..."
+
+
+def _stderr_log_rank(line: str) -> int:
+    level = _stderr_log_level(line)
+    if level is None:
+        return LOG_LEVEL_RANKS["info"]
+    return LOG_LEVEL_RANKS.get(level, LOG_LEVEL_RANKS["info"])
+
+
+def _stderr_log_level(line: str) -> str | None:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        value = None
+
+    if isinstance(value, dict):
+        for key in ("level", "levelname", "severity", "logLevel", "lvl"):
+            normalized = _normalize_log_level(value.get(key))
+            if normalized is not None:
+                return normalized
+
+    for pattern in (
+        r"\b(?:level|severity|lvl|log_level)\s*[:=]\s*\"?([A-Za-z]+)\"?",
+        r"^\s*(?:\[[^\]]+\]\s*)?\[?(trace|debug|info|notice|warn|warning|error|fatal|critical)\]?\b",
+    ):
+        match = re.search(pattern, line, flags=re.IGNORECASE)
+        if match is not None:
+            return _normalize_log_level(match.group(1))
+
+    if re.search(r"\b(error|fatal|critical|exception|traceback)\b", line, flags=re.IGNORECASE):
+        return "error"
+
+    return None
+
+
+def _normalize_log_level(value: Any) -> str | None:
+    if isinstance(value, int):
+        if value >= LOG_LEVEL_RANKS["error"]:
+            return "error"
+        if value >= LOG_LEVEL_RANKS["warning"]:
+            return "warning"
+        if value >= LOG_LEVEL_RANKS["info"]:
+            return "info"
+        if value >= LOG_LEVEL_RANKS["debug"]:
+            return "debug"
+        return "trace"
+
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip().lower()
+    if normalized == "warn":
+        normalized = "warning"
+    if normalized == "critical":
+        normalized = "fatal"
+    return normalized if normalized in LOG_LEVEL_RANKS else None
 
 
 def _claude_failure_details(

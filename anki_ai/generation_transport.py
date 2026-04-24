@@ -10,6 +10,7 @@ from typing import Any, Union, cast
 from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from .generation_service import (
     ClaudeCardGenerationService,
+    GenerationLogEvent,
     GenerationResult,
     GenerationServiceError,
     MaterialInput,
@@ -93,14 +94,19 @@ class GenerationTransportHandlers:
                 },
             )
 
-        def log_sink(line: str) -> None:
-            emit_job(
-                {
-                    "status": "log",
-                    "level": "info",
-                    "message": line,
-                }
-            )
+        def log_sink(event: GenerationLogEvent) -> None:
+            payload: JsonObject = {
+                "status": "log",
+                "level": event.get("level", "info"),
+                "message": event.get("message", ""),
+            }
+            source = event.get("source")
+            role = event.get("role")
+            if source is not None:
+                payload["source"] = source
+            if role is not None:
+                payload["role"] = role
+            emit_job(payload)
 
         def operation() -> GenerationResult:
             emit_job(
