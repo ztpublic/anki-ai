@@ -3,7 +3,7 @@ FRONTEND_DIR := frontend
 DIST_DIR := dist
 ADDON_ARCHIVE := $(DIST_DIR)/$(ADDON_PACKAGE).ankiaddon
 VENDOR_DIR := $(ADDON_PACKAGE)/vendor
-RUNTIME_DEPS := claude-agent-sdk markitdown[all]
+RUNTIME_DEPS := claude-agent-sdk jinja2 markitdown[all]
 ANKI_PYTHON := $(HOME)/Library/Application Support/AnkiProgramFiles/.venv/bin/python
 VENDOR_PYTHON ?= python
 

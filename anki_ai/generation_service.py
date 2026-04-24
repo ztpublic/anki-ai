@@ -15,6 +15,16 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TypedDict
 
+from .card_generation_workflows import (
+    CardGenerationWorkflowError,
+    GeneratedCard,
+    get_generation_workflow,
+)
+from .card_types import (
+    CardTypeError,
+    DEFAULT_CARD_TYPE_ID,
+    normalize_card_type_id,
+)
 from .file_conversion_service import (
     FileConversionInput,
     FileConversionResult,
@@ -26,12 +36,6 @@ from .file_conversion_service import (
 class MaterialInput(TypedDict):
     name: str
     contentBase64: str
-
-
-class GeneratedCard(TypedDict):
-    id: str
-    front: str
-    back: str
 
 
 class GenerationRunInfo(TypedDict, total=False):
@@ -79,7 +83,6 @@ GenerationLogSink = Callable[[str], None]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
 MARKDOWN_MATERIAL_EXTENSIONS = frozenset({".md", ".markdown"})
-CARD_GENERATION_PROMPT_PATH = Path(__file__).with_name("card_generation_prompt.md")
 ADDON_DIR = Path(__file__).resolve().parent
 ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
 PROJECT_ROOT = ADDON_DIR.parent
@@ -134,6 +137,7 @@ class ClaudeCardGenerationService:
         source_text: str | None = None,
         materials: Sequence[MaterialInput] = (),
         card_count: int = DEFAULT_CARD_COUNT,
+        card_type: str = DEFAULT_CARD_TYPE_ID,
         log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
         has_source_text = source_text is not None and bool(source_text.strip())
@@ -142,6 +146,16 @@ class ClaudeCardGenerationService:
                 "missing_generation_input",
                 "Provide source text or at least one material file to generate cards.",
             )
+
+        try:
+            card_type_id = normalize_card_type_id(card_type)
+            get_generation_workflow(card_type_id)
+        except CardTypeError as error:
+            raise GenerationServiceError(
+                "invalid_card_type",
+                str(error),
+                {"cardType": card_type},
+            ) from error
 
         normalized_card_count = max(1, min(card_count, self.MAX_CARD_COUNT))
         workspace_path = self._workspace_factory()
@@ -224,6 +238,7 @@ class ClaudeCardGenerationService:
         prompt = self._build_prompt(
             material_names=material_names,
             card_count=normalized_card_count,
+            card_type_id=card_type_id,
         )
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
@@ -306,7 +321,7 @@ class ClaudeCardGenerationService:
             ) from error
 
         return {
-            "cards": self._normalize_cards(parsed_cards),
+            "cards": self._normalize_cards(parsed_cards, card_type_id),
             "run": run_info,
         }
 
@@ -315,54 +330,25 @@ class ClaudeCardGenerationService:
         *,
         material_names: Sequence[str],
         card_count: int,
+        card_type_id: str = DEFAULT_CARD_TYPE_ID,
     ) -> str:
-        material_files = "\n".join(f"- {name}" for name in material_names)
-        return (
-            _load_card_generation_prompt()
-            .replace("{{target_card_count}}", str(card_count))
-            .replace("{{material_files}}", material_files)
-        )
-
-    def _normalize_cards(self, value: Any) -> list[GeneratedCard]:
-        if not isinstance(value, list) or not value:
-            raise GenerationServiceError(
-                "invalid_cards_output",
-                "cards.json must contain a non-empty JSON array.",
+        try:
+            return get_generation_workflow(card_type_id).build_prompt(
+                material_names=material_names,
+                card_count=card_count,
             )
+        except CardGenerationWorkflowError as error:
+            raise GenerationServiceError(error.code, error.message, error.details) from error
 
-        cards: list[GeneratedCard] = []
-        for index, item in enumerate(value):
-            if not isinstance(item, dict):
-                raise GenerationServiceError(
-                    "invalid_cards_output",
-                    "Each cards.json entry must be an object.",
-                    {"cardIndex": index},
-                )
-
-            front = item.get("Front", item.get("front"))
-            back = item.get("Back", item.get("back"))
-            if not isinstance(front, str) or not front.strip():
-                raise GenerationServiceError(
-                    "invalid_cards_output",
-                    'Each card must have a non-empty string field "Front" or "front".',
-                    {"cardIndex": index},
-                )
-            if not isinstance(back, str) or not back.strip():
-                raise GenerationServiceError(
-                    "invalid_cards_output",
-                    'Each card must have a non-empty string field "Back" or "back".',
-                    {"cardIndex": index},
-                )
-
-            cards.append(
-                {
-                    "id": f"generated-{index + 1}",
-                    "front": front,
-                    "back": back,
-                }
-            )
-
-        return cards
+    def _normalize_cards(
+        self,
+        value: Any,
+        card_type_id: str = DEFAULT_CARD_TYPE_ID,
+    ) -> list[GeneratedCard]:
+        try:
+            return get_generation_workflow(card_type_id).normalize_cards(value)
+        except CardGenerationWorkflowError as error:
+            raise GenerationServiceError(error.code, error.message, error.details) from error
 
     def _sanitize_material_filename(
         self,
@@ -451,17 +437,6 @@ class ClaudeCardGenerationService:
             workspace_path,
             log_sink=log_sink,
         )
-
-
-def _load_card_generation_prompt() -> str:
-    try:
-        return CARD_GENERATION_PROMPT_PATH.read_text(encoding="utf-8")
-    except OSError as error:
-        raise GenerationServiceError(
-            "missing_generation_prompt",
-            "Card generation prompt template could not be read.",
-            {"path": str(CARD_GENERATION_PROMPT_PATH)},
-        ) from error
 
 
 def _run_claude_generation(

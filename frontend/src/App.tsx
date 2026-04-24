@@ -20,8 +20,27 @@ import { BridgeTransportError } from "./bridge";
 
 type Flashcard = {
   id: string;
+  cardType: CardTypeId;
   front: string;
   back: string;
+  explanation?: string;
+};
+
+type CardTypeId = "basic" | "answer_with_explanation";
+
+type EditableCardField = "front" | "back" | "explanation";
+
+type CardTypeDefinition = {
+  id: CardTypeId;
+  label: string;
+  generationLabel: string;
+  fields: {
+    key: EditableCardField;
+    label: string;
+    placeholder: string;
+    tone: "front" | "back";
+  }[];
+  toAnkiFields: (card: Flashcard) => Record<string, string>;
 };
 
 type Deck = {
@@ -145,6 +164,90 @@ const SUPPORTED_ATTACHMENT_EXTENSION_SET = new Set<string>(
 const SUPPORTED_ATTACHMENT_ACCEPT = SUPPORTED_ATTACHMENT_EXTENSIONS.join(",");
 const SUPPORTED_ATTACHMENT_SUMMARY =
   "PDF, Office, text, web, data, image, audio/video, ZIP";
+
+const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
+
+function combineAnswerAndExplanation(card: Flashcard): string {
+  const answer = card.back.trim();
+  const explanation = card.explanation?.trim() ?? "";
+
+  if (!explanation) {
+    return answer;
+  }
+
+  if (!answer) {
+    return explanation;
+  }
+
+  return `${answer}\n\nExplanation:\n${explanation}`;
+}
+
+const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
+  basic: {
+    id: "basic",
+    label: "Question and Answer",
+    generationLabel: "Q&A",
+    fields: [
+      {
+        key: "front",
+        label: "Front (Question)",
+        placeholder: "Type the question here...",
+        tone: "front",
+      },
+      {
+        key: "back",
+        label: "Back (Answer)",
+        placeholder: "Type the answer here...",
+        tone: "back",
+      },
+    ],
+    toAnkiFields: (card) => ({
+      Front: card.front,
+      Back: card.back,
+    }),
+  },
+  answer_with_explanation: {
+    id: "answer_with_explanation",
+    label: "Answer with Explanation",
+    generationLabel: "Answer + explanation",
+    fields: [
+      {
+        key: "front",
+        label: "Front (Question)",
+        placeholder: "Type the question here...",
+        tone: "front",
+      },
+      {
+        key: "back",
+        label: "Back (Answer)",
+        placeholder: "Type the answer here...",
+        tone: "back",
+      },
+      {
+        key: "explanation",
+        label: "Explanation",
+        placeholder: "Add the explanation here...",
+        tone: "back",
+      },
+    ],
+    toAnkiFields: (card) => ({
+      Front: card.front,
+      Back: combineAnswerAndExplanation(card),
+    }),
+  },
+};
+
+const CARD_TYPE_OPTIONS = Object.values(CARD_TYPES);
+
+function normalizeCardType(cardType: unknown): CardTypeId {
+  return typeof cardType === "string" && cardType in CARD_TYPES
+    ? (cardType as CardTypeId)
+    : DEFAULT_CARD_TYPE_ID;
+}
+
+function cardTypeDefinition(card: Flashcard): CardTypeDefinition {
+  return CARD_TYPES[card.cardType] ?? CARD_TYPES[DEFAULT_CARD_TYPE_ID];
+}
 
 function createCardId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -275,6 +378,8 @@ export function App() {
   const [inputText, setInputText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [cardCount, setCardCount] = useState(5);
+  const [selectedCardTypeId, setSelectedCardTypeId] =
+    useState<CardTypeId>(DEFAULT_CARD_TYPE_ID);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedCards, setGeneratedCards] = useState<Flashcard[]>([]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
@@ -299,6 +404,7 @@ export function App() {
   const activeGenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
   const currentCard = generatedCards[currentCardIndex];
+  const currentCardType = currentCard ? cardTypeDefinition(currentCard) : null;
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
@@ -434,8 +540,10 @@ export function App() {
           setGeneratedCards(
             event.result.cards.map((card) => ({
               id: card.id || createCardId(),
+              cardType: normalizeCardType(card.cardType),
               front: card.front,
               back: card.back,
+              explanation: card.explanation,
             })),
           );
           setCurrentCardIndex(0);
@@ -532,6 +640,7 @@ export function App() {
         {
           sourceText: inputText.trim().length > 0 ? inputText : undefined,
           cardCount,
+          cardType: selectedCardTypeId,
           materials,
         },
         { timeoutMs: 10000 },
@@ -573,10 +682,7 @@ export function App() {
           deckId: selectedDeck.id,
           noteTypeName: "Basic",
           cards: generatedCards.map<InsertCardPayload>((card) => ({
-            fields: {
-              Front: card.front,
-              Back: card.back,
-            },
+            fields: cardTypeDefinition(card).toAnkiFields(card),
           })),
         },
         { timeoutMs: 15000 },
@@ -584,6 +690,7 @@ export function App() {
 
       const savedCards = result.cards.map((card) => ({
         id: card.id,
+        cardType: DEFAULT_CARD_TYPE_ID,
         front: card.fields.Front ?? card.question,
         back: card.fields.Back ?? card.answer,
         deckId: result.deck.id,
@@ -615,7 +722,7 @@ export function App() {
     }
   };
 
-  const handleCardUpdate = (field: "front" | "back", value: string) => {
+  const handleCardUpdate = (field: EditableCardField, value: string) => {
     setGeneratedCards((previousCards) =>
       previousCards.map((card, index) =>
         index === currentCardIndex ? { ...card, [field]: value } : card,
@@ -671,6 +778,29 @@ export function App() {
                   <span className="truncate">{deckLoadError}</span>
                 </div>
               ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                className="block text-xs font-semibold text-zinc-600"
+                htmlFor="card-type"
+              >
+                Card Type
+              </label>
+              <select
+                id="card-type"
+                value={selectedCardTypeId}
+                onChange={(event) =>
+                  setSelectedCardTypeId(event.target.value as CardTypeId)
+                }
+                className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              >
+                {CARD_TYPE_OPTIONS.map((cardType) => (
+                  <option key={cardType.id} value={cardType.id}>
+                    {cardType.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1.5">
@@ -776,7 +906,7 @@ export function App() {
               ) : (
                 <>
                   <Sparkles className="h-5 w-5" />
-                  Generate {cardCount} Cards
+                  Generate {cardCount} {CARD_TYPES[selectedCardTypeId].generationLabel}
                 </>
               )}
             </button>
@@ -840,12 +970,17 @@ export function App() {
                 <div ref={generationLogEndRef} />
               </div>
             </div>
-          ) : generatedCards.length > 0 && currentCard ? (
+          ) : generatedCards.length > 0 && currentCard && currentCardType ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
-                <h2 className="text-sm font-semibold text-zinc-800">
-                  Review Cards
-                </h2>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-zinc-800">
+                    Review Cards
+                  </h2>
+                  <div className="truncate text-xs font-medium text-zinc-500">
+                    {currentCardType.label}
+                  </div>
+                </div>
                 <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-zinc-500">
                   {selectedDeck !== null ? (
                     <span
@@ -868,40 +1003,38 @@ export function App() {
                 transition={{ duration: 0.2 }}
                 className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white"
               >
-                <div className="flex min-h-0 flex-1 flex-col border-b border-zinc-200 p-5">
-                  <label
-                    className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500"
-                    htmlFor="card-front"
-                  >
-                    Front (Question)
-                  </label>
-                  <textarea
-                    id="card-front"
-                    value={currentCard.front}
-                    onChange={(event) =>
-                      handleCardUpdate("front", event.target.value)
+                {currentCardType.fields.map((field, fieldIndex) => (
+                  <div
+                    key={field.key}
+                    className={
+                      field.tone === "front"
+                        ? "flex min-h-0 flex-1 flex-col border-b border-zinc-200 p-5"
+                        : fieldIndex === currentCardType.fields.length - 1
+                          ? "flex min-h-0 flex-1 flex-col bg-zinc-50 p-5"
+                          : "flex min-h-0 flex-1 flex-col border-b border-zinc-200 bg-zinc-50 p-5"
                     }
-                    className="min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-indigo-50/20"
-                    placeholder="Type the question here..."
-                  />
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 p-5">
-                  <label
-                    className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500"
-                    htmlFor="card-back"
                   >
-                    Back (Answer)
-                  </label>
-                  <textarea
-                    id="card-back"
-                    value={currentCard.back}
-                    onChange={(event) =>
-                      handleCardUpdate("back", event.target.value)
-                    }
-                    className="min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-white"
-                    placeholder="Type the answer here..."
-                  />
-                </div>
+                    <label
+                      className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500"
+                      htmlFor={`card-${field.key}`}
+                    >
+                      {field.label}
+                    </label>
+                    <textarea
+                      id={`card-${field.key}`}
+                      value={currentCard[field.key] ?? ""}
+                      onChange={(event) =>
+                        handleCardUpdate(field.key, event.target.value)
+                      }
+                      className={
+                        field.tone === "front"
+                          ? "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-indigo-50/20"
+                          : "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-white"
+                      }
+                      placeholder={field.placeholder}
+                    />
+                  </div>
+                ))}
               </motion.div>
 
               <div className="flex h-14 shrink-0 items-center justify-between border-t border-zinc-300 bg-zinc-100 px-4">

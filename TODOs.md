@@ -47,3 +47,5 @@
 - formal model provider configuration interface
 
 - markdown to html post processing?
+
+- add prompt template library

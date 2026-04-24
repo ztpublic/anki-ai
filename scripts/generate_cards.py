@@ -16,6 +16,7 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
+from anki_ai.card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from anki_ai.generation_service import ClaudeCardGenerationService
 
 
@@ -39,6 +40,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"Defaults to {ClaudeCardGenerationService.DEFAULT_CARD_COUNT}."
         ),
     )
+    parser.add_argument(
+        "--card-type",
+        choices=card_type_ids(),
+        default=DEFAULT_CARD_TYPE_ID,
+        help="Application card type to generate.",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -59,6 +66,7 @@ async def _run(args: argparse.Namespace) -> int:
     prompt = ClaudeCardGenerationService()._build_prompt(
         material_names=[material_name],
         card_count=max(1, min(args.card_count, ClaudeCardGenerationService.MAX_CARD_COUNT)),
+        card_type_id=args.card_type,
     )
 
     stderr_lines: list[str] = []

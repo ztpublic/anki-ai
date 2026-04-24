@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "claude-agent-sdk",
+  "jinja2",
   "markitdown[all]",
 ]
 
@@ -24,7 +25,7 @@ packages = ["anki_ai"]
 
 [tool.setuptools.package-data]
 anki_ai = [
-  "card_generation_prompt.md",
+  "prompts/*.md.jinja",
   "web/*.html",
   "web/assets/*",
 ]

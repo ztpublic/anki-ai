@@ -44,6 +44,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 self.assertIn("Delete or rewrite any card that fails the audit.", prompt)
                 self.assertIn('Each flashcard must be a JSON object with exactly these fields:', prompt)
                 self.assertIn('- "Front": string', prompt)
+                self.assertIn('- "Back": string', prompt)
+                self.assertNotIn('- "Explanation": string', prompt)
+                self.assertNotIn("answer_with_explanation", prompt)
                 self.assertIn("- user_input.txt", prompt)
                 self.assertIn("- notes.md", prompt)
                 self.assertEqual(
@@ -81,8 +84,18 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(
             result["cards"],
             [
-                {"id": "generated-1", "front": "Question 1", "back": "Answer 1"},
-                {"id": "generated-2", "front": "Question 2", "back": "Answer 2"},
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question 1",
+                    "back": "Answer 1",
+                },
+                {
+                    "id": "generated-2",
+                    "cardType": "basic",
+                    "front": "Question 2",
+                    "back": "Answer 2",
+                },
             ],
         )
         self.assertEqual(
@@ -125,7 +138,14 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
         self.assertEqual(
             result["cards"],
-            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question",
+                    "back": "Answer",
+                }
+            ],
         )
 
     def test_generate_cards_converts_non_markdown_material_to_markdown(self) -> None:
@@ -178,7 +198,14 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
         self.assertEqual(
             result["cards"],
-            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question",
+                    "back": "Answer",
+                }
+            ],
         )
         self.assertEqual(len(converter.calls), 1)
         self.assertEqual(converter.calls[0]["name"], "lecture.pdf")
@@ -229,7 +256,14 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
         self.assertEqual(
             result["cards"],
-            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question",
+                    "back": "Answer",
+                }
+            ],
         )
         self.assertEqual(logs, [])
 
@@ -492,8 +526,90 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
         self.assertEqual(
             result["cards"],
-            [{"id": "generated-1", "front": "Question", "back": "Answer"}],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question",
+                    "back": "Answer",
+                }
+            ],
         )
+
+    def test_generate_cards_supports_answer_with_explanation_card_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn(
+                    "answer-with-explanation flashcards",
+                    prompt,
+                )
+                self.assertIn('- "Explanation": string', prompt)
+                self.assertNotIn("basic question-and-answer flashcards", prompt)
+                (workspace / "cards.json").write_text(
+                    json.dumps(
+                        [
+                            {
+                                "Front": "Why does X happen?",
+                                "Back": "Because of Y",
+                                "Explanation": "Y changes the relevant mechanism.",
+                            }
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.generate_cards(
+                source_text="Important facts",
+                card_type="answer_with_explanation",
+            )
+
+        self.assertEqual(
+            result["cards"],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "answer_with_explanation",
+                    "front": "Why does X happen?",
+                    "back": "Because of Y",
+                    "explanation": "Y changes the relevant mechanism.",
+                }
+            ],
+        )
+
+    def test_generate_cards_requires_explanation_for_explanation_card_type(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                _ = prompt
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            with self.assertRaises(GenerationServiceError) as error:
+                service.generate_cards(
+                    source_text="Important facts",
+                    card_type="answer_with_explanation",
+                )
+
+        self.assertEqual(error.exception.code, "invalid_cards_output")
 
     def test_generate_cards_rejects_invalid_material_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

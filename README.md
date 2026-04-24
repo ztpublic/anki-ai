@@ -31,11 +31,12 @@ temporary workspace that produces a `cards.json` file for the review UI.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
 - Presents a flashcard generator UI with source text input, optional file
-  selection, target deck selection, card count, live generation, and card
-  review/edit/discard controls.
+  selection, target deck selection, app-level card type selection, card count,
+  live generation, and card review/edit/discard controls.
 - Loads target decks from the active Anki collection through the webview bridge.
 - Saves reviewed cards into the selected Anki deck with the stock `Basic`
-  note type by default.
+  note type by default. App-level card types are separate from Anki note/card
+  types.
 
 ## Repository Layout
 
@@ -184,6 +185,8 @@ to markdown files in that directory, runs Claude Code with that workspace as the
 current directory, and expects a single `cards.json` file in the workspace root.
 Pasted text is optional; if the user only attaches files, no `user_input.txt`
 file is created.
+Each app-level card type uses its own Jinja2 prompt template and output
+normalizer.
 
 Bridge request:
 
@@ -196,6 +199,7 @@ Bridge request:
   "params": {
     "sourceText": "Paste your study notes here",
     "cardCount": 5,
+    "cardType": "basic",
     "materials": [
       {
         "name": "chapter-1.md",
@@ -217,6 +221,11 @@ Claude Code output contract:
 ]
 ```
 
+`cardType` is optional and defaults to `basic`. Supported app-level card types:
+
+- `basic`: outputs `Front` and `Back`.
+- `answer_with_explanation`: outputs `Front`, `Back`, and `Explanation`.
+
 Generation response:
 
 ```json
@@ -229,6 +238,7 @@ Generation response:
     "cards": [
       {
         "id": "generated-1",
+        "cardType": "basic",
         "front": "Question text",
         "back": "Answer text"
       }
@@ -250,6 +260,7 @@ python scripts/generate_cards.py /path/to/material.pdf --card-count 10
 The script accepts one local file path, copies it into the same Claude Code
 `materials/` workspace used by the add-on, and writes a JSON array of
 `{"Front", "Back"}` card objects to `/path/to/material.pdf.json`.
+Use `--card-type answer_with_explanation` to generate `Explanation` fields too.
 
 ## Batch Card Insert Format
 
@@ -294,6 +305,9 @@ Rules:
 - Each entry in `cards` must include a non-empty `fields` object.
 - `fields` keys must exactly match the selected note type's field names.
 - `tags` is optional and must be a list of strings when provided.
+- For the `answer_with_explanation` app card type, the frontend still sends
+  Anki `Basic` fields: `Front` is preserved, and `Back` contains the direct
+  answer followed by the explanation text.
 
 Response:
 
@@ -395,6 +409,6 @@ registers its menu item regardless of this value.
 
 ## Known Gaps
 
-- The Claude generation prompt is intentionally simple and will likely need iteration.
+- The per-card-type Claude generation prompt templates will likely need iteration.
 - Uploaded files are passed to Claude Code as workspace materials without any local preprocessing.
 - Generation runs synchronously through the current bridge request path, so there is no cancel/resume flow yet.

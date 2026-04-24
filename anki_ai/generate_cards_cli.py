@@ -10,9 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, TextIO
 
+from anki_ai.card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
+from anki_ai.card_generation_workflows import GeneratedCard
 from anki_ai.generation_service import (
     ClaudeCardGenerationService,
-    GeneratedCard,
     GenerationResult,
     GenerationServiceError,
     MaterialInput,
@@ -26,6 +27,7 @@ class CardGenerator(Protocol):
         source_text: str | None = None,
         materials: Sequence[MaterialInput] = (),
         card_count: int = ClaudeCardGenerationService.DEFAULT_CARD_COUNT,
+        card_type: str = DEFAULT_CARD_TYPE_ID,
     ) -> GenerationResult: ...
 
 
@@ -48,6 +50,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Approximate number of cards to request from Claude Code. "
             f"Defaults to {ClaudeCardGenerationService.DEFAULT_CARD_COUNT}."
         ),
+    )
+    parser.add_argument(
+        "--card-type",
+        choices=card_type_ids(),
+        default=DEFAULT_CARD_TYPE_ID,
+        help="Application card type to generate.",
     )
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -84,6 +92,7 @@ def main(
         result = generator.generate_cards(
             materials=[material],
             card_count=args.card_count,
+            card_type=args.card_type,
         )
     except GenerationServiceError as error:
         error_stream.write(f"Card generation failed: {error.message}\n")
@@ -105,13 +114,16 @@ def main(
 
 
 def _render_cards_json(cards: Sequence[GeneratedCard]) -> str:
-    payload = [
-        {
+    payload: list[dict[str, str]] = []
+    for card in cards:
+        rendered = {
             "Front": card["front"],
             "Back": card["back"],
         }
-        for card in cards
-    ]
+        explanation = card.get("explanation")
+        if explanation is not None:
+            rendered["Explanation"] = explanation
+        payload.append(rendered)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

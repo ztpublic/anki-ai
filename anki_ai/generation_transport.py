@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Union, cast
 
+from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from .generation_service import (
     ClaudeCardGenerationService,
     GenerationResult,
@@ -61,13 +62,14 @@ class GenerationTransportHandlers:
         self._event_emitter = event_emitter
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
-        source_text, materials, card_count = self._generation_inputs(params)
+        source_text, materials, card_count, card_type = self._generation_inputs(params)
 
         return self._run(
             lambda service: service.generate_cards(
                 source_text=source_text,
                 materials=materials,
                 card_count=card_count,
+                card_type=card_type,
             )
         )
 
@@ -79,7 +81,7 @@ class GenerationTransportHandlers:
                 "Generation events are not available in this bridge context.",
             )
 
-        source_text, materials, card_count = self._generation_inputs(params)
+        source_text, materials, card_count, card_type = self._generation_inputs(params)
         job_id = str(uuid.uuid4())
 
         def emit_job(payload: JsonObject) -> None:
@@ -111,6 +113,7 @@ class GenerationTransportHandlers:
                 source_text=source_text,
                 materials=materials,
                 card_count=card_count,
+                card_type=card_type,
                 log_sink=log_sink,
             )
 
@@ -137,7 +140,7 @@ class GenerationTransportHandlers:
     def _generation_inputs(
         self,
         params: JsonObject,
-    ) -> tuple[str | None, list[MaterialInput], int]:
+    ) -> tuple[str | None, list[MaterialInput], int, str]:
         source_text = _optional_string(params, "sourceText")
         card_count = _optional_int(
             params,
@@ -146,6 +149,7 @@ class GenerationTransportHandlers:
             minimum=1,
             maximum=ClaudeCardGenerationService.MAX_CARD_COUNT,
         )
+        card_type = _optional_card_type(params, "cardType")
         materials = _optional_material_inputs(params, "materials")
 
         if source_text is None and not materials:
@@ -154,7 +158,7 @@ class GenerationTransportHandlers:
                 "Provide sourceText or at least one item in materials.",
             )
 
-        return source_text, materials, card_count
+        return source_text, materials, card_count, card_type
 
     def _run(
         self,
@@ -211,6 +215,22 @@ def _optional_string(params: JsonObject, key: str) -> str | None:
         raise TransportError(
             "invalid_params",
             f"{key} must be a non-empty string when provided.",
+        )
+    return value
+
+
+def _optional_card_type(params: JsonObject, key: str) -> str:
+    value = params.get(key, DEFAULT_CARD_TYPE_ID)
+    if not isinstance(value, str) or not value.strip():
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty string.",
+        )
+    if value not in card_type_ids():
+        raise TransportError(
+            "invalid_params",
+            f"{key} is not a supported card type.",
+            {"cardType": value, "supportedCardTypes": list(card_type_ids())},
         )
     return value
 

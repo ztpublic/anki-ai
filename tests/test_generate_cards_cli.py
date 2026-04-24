@@ -16,8 +16,18 @@ class FakeCardGenerator:
         self.calls: list[dict[str, object]] = []
         self.response = {
             "cards": [
-                {"id": "generated-1", "front": "Front 1", "back": "Back 1"},
-                {"id": "generated-2", "front": "Front 2", "back": "Back 2"},
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Front 1",
+                    "back": "Back 1",
+                },
+                {
+                    "id": "generated-2",
+                    "cardType": "basic",
+                    "front": "Front 2",
+                    "back": "Back 2",
+                },
             ],
             "run": {"workspacePath": "/tmp/fake-run"},
         }
@@ -28,12 +38,14 @@ class FakeCardGenerator:
         source_text: str | None = None,
         materials: list[dict[str, str]] | tuple[()] = (),
         card_count: int = 5,
+        card_type: str = "basic",
     ) -> dict[str, object]:
         self.calls.append(
             {
                 "source_text": source_text,
                 "materials": list(materials),
                 "card_count": card_count,
+                "card_type": card_type,
             }
         )
         return self.response
@@ -46,10 +58,12 @@ class ErrorCardGenerator:
         source_text: str | None = None,
         materials: list[dict[str, str]] | tuple[()] = (),
         card_count: int = 5,
+        card_type: str = "basic",
     ) -> dict[str, object]:
         _ = source_text
         _ = materials
         _ = card_count
+        _ = card_type
         raise GenerationServiceError(
             "claude_generation_failed",
             "Claude Code generation failed.",
@@ -89,6 +103,7 @@ class GenerateCardsCliTest(unittest.TestCase):
         self.assertEqual(len(service.calls), 1)
         call = service.calls[0]
         self.assertEqual(call["card_count"], 7)
+        self.assertEqual(call["card_type"], "basic")
         materials = call["materials"]
         self.assertIsInstance(materials, list)
         assert isinstance(materials, list)
@@ -97,6 +112,55 @@ class GenerateCardsCliTest(unittest.TestCase):
             base64.b64decode(materials[0]["contentBase64"]),
             b"# Notes\n",
         )
+
+    def test_main_writes_explanation_cards(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            material_path = Path(temp_dir) / "notes.md"
+            material_path.write_text("# Notes\n", encoding="utf-8")
+            output_path = Path(temp_dir) / "notes.md.json"
+
+            service = FakeCardGenerator()
+            service.response = {
+                "cards": [
+                    {
+                        "id": "generated-1",
+                        "cardType": "answer_with_explanation",
+                        "front": "Front",
+                        "back": "Back",
+                        "explanation": "Because the source says so.",
+                    }
+                ],
+                "run": {"workspacePath": "/tmp/fake-run"},
+            }
+            stdout = StringIO()
+            stderr = StringIO()
+
+            exit_code = main(
+                [
+                    str(material_path),
+                    "--card-type",
+                    "answer_with_explanation",
+                ],
+                service=service,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            written = output_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(stdout.getvalue().strip(), str(output_path))
+        self.assertEqual(
+            json.loads(written),
+            [
+                {
+                    "Front": "Front",
+                    "Back": "Back",
+                    "Explanation": "Because the source says so.",
+                }
+            ],
+        )
+        self.assertEqual(service.calls[0]["card_type"], "answer_with_explanation")
 
     def test_main_reports_generation_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -35,6 +35,7 @@ class FakeGenerationService:
         source_text: str | None = None,
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
+        card_type: str = "basic",
         log_sink: Callable[[str], None] | None = None,
     ) -> JsonObject:
         if log_sink is not None:
@@ -44,10 +45,18 @@ class FakeGenerationService:
                 "source_text": source_text,
                 "materials": [] if materials is None else materials,
                 "card_count": card_count,
+                "card_type": card_type,
             }
         )
         return {
-            "cards": [{"id": "generated-1", "front": "Front", "back": "Back"}],
+            "cards": [
+                {
+                    "id": "generated-1",
+                    "cardType": card_type,
+                    "front": "Front",
+                    "back": "Back",
+                }
+            ],
             "run": {"workspacePath": "/tmp/fake-run"},
         }
 
@@ -59,11 +68,13 @@ class RateLimitedGenerationService:
         source_text: str | None = None,
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
+        card_type: str = "basic",
         log_sink: Callable[[str], None] | None = None,
     ) -> JsonObject:
         _ = source_text
         _ = materials
         _ = card_count
+        _ = card_type
         _ = log_sink
         raise GenerationServiceError(
             "claude_generation_rate_limited",
@@ -108,9 +119,50 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "source_text": "Important facts",
                     "materials": [{"name": "notes.md", "contentBase64": "aGVsbG8="}],
                     "card_count": 7,
+                    "card_type": "basic",
                 }
             ],
         )
+
+    def test_generate_cards_accepts_card_type(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {
+                    "sourceText": "Important facts",
+                    "cardType": "answer_with_explanation",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            response["result"]["cards"][0]["cardType"],
+            "answer_with_explanation",
+        )
+        self.assertEqual(service.calls[0]["card_type"], "answer_with_explanation")
+
+    def test_generate_cards_rejects_unknown_card_type(self) -> None:
+        router = TransportRouter()
+        register_generation_transport_handlers(router, FakeGenerationService())
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {"sourceText": "Important facts", "cardType": "cloze"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
 
     def test_generate_cards_requires_input_material(self) -> None:
         service = FakeGenerationService()
