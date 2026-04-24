@@ -32,3 +32,18 @@
 - add source file name as tag to cards
 - when saved, reset attached files
 - edit prompt tab
+
+- sub agents for very long materails
+- math equation tex display
+
+- card limit should be input box
+
+- how to use vector db?
+
+- should support a code repository??
+
+- beyond just creation, what should user do if he forget and don't understand a question
+
+- formal model provider configuration interface
+
+- markdown to html post processing?
