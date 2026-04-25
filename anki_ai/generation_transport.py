@@ -42,6 +42,7 @@ def register_generation_transport_handlers(
     )
     router.register("anki.generation.generateCards", handlers.generate_cards)
     router.register("anki.generation.startGenerateCards", handlers.start_generate_cards)
+    router.register("anki.generation.stopGenerateCards", handlers.stop_generate_cards)
 
 
 class GenerationTransportHandlers:
@@ -61,6 +62,9 @@ class GenerationTransportHandlers:
             else background_runner
         )
         self._event_emitter = event_emitter
+        self._jobs_lock = threading.Lock()
+        self._active_jobs: set[str] = set()
+        self._cancelled_jobs: set[str] = set()
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
         source_text, materials, card_count, card_type = self._generation_inputs(params)
@@ -85,6 +89,9 @@ class GenerationTransportHandlers:
         source_text, materials, card_count, card_type = self._generation_inputs(params)
         job_id = str(uuid.uuid4())
 
+        with self._jobs_lock:
+            self._active_jobs.add(job_id)
+
         def emit_job(payload: JsonObject) -> None:
             event_emitter(
                 "anki.generation.job",
@@ -94,7 +101,14 @@ class GenerationTransportHandlers:
                 },
             )
 
+        def is_cancelled() -> bool:
+            with self._jobs_lock:
+                return job_id in self._cancelled_jobs
+
         def log_sink(event: GenerationLogEvent) -> None:
+            if is_cancelled():
+                return
+
             payload: JsonObject = {
                 "status": "log",
                 "level": event.get("level", "info"),
@@ -112,21 +126,40 @@ class GenerationTransportHandlers:
             emit_job(payload)
 
         def operation() -> GenerationResult:
+            if is_cancelled():
+                raise GenerationServiceError(
+                    "generation_cancelled",
+                    "Generation was stopped.",
+                )
             emit_job(
                 {
                     "status": "started",
                     "message": "Started Claude Code card generation.",
                 }
             )
-            return self._service.generate_cards(
+            result = self._service.generate_cards(
                 source_text=source_text,
                 materials=materials,
                 card_count=card_count,
                 card_type=card_type,
                 log_sink=log_sink,
             )
+            if is_cancelled():
+                raise GenerationServiceError(
+                    "generation_cancelled",
+                    "Generation was stopped.",
+                )
+            return result
 
         def on_done(outcome: GenerationJobOutcome) -> None:
+            with self._jobs_lock:
+                was_cancelled = job_id in self._cancelled_jobs
+                self._active_jobs.discard(job_id)
+                self._cancelled_jobs.discard(job_id)
+
+            if was_cancelled:
+                return
+
             if isinstance(outcome, BaseException):
                 emit_job(
                     {
@@ -145,6 +178,32 @@ class GenerationTransportHandlers:
 
         self._background_runner(operation, on_done)
         return {"jobId": job_id}
+
+    def stop_generate_cards(self, params: JsonObject) -> JsonObject:
+        event_emitter = self._event_emitter
+        if event_emitter is None:
+            raise TransportError(
+                "generation_events_unavailable",
+                "Generation events are not available in this bridge context.",
+            )
+
+        job_id = _required_string(params, "jobId")
+        with self._jobs_lock:
+            was_active = job_id in self._active_jobs
+            if was_active:
+                self._cancelled_jobs.add(job_id)
+
+        if was_active:
+            event_emitter(
+                "anki.generation.job",
+                {
+                    "jobId": job_id,
+                    "status": "cancelled",
+                    "message": "Generation stopped.",
+                },
+            )
+
+        return {"jobId": job_id, "stopped": was_active}
 
     def _generation_inputs(
         self,
@@ -224,6 +283,16 @@ def _optional_string(params: JsonObject, key: str) -> str | None:
         raise TransportError(
             "invalid_params",
             f"{key} must be a non-empty string when provided.",
+        )
+    return value
+
+
+def _required_string(params: JsonObject, key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty string.",
         )
     return value
 

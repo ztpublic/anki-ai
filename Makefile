@@ -7,7 +7,9 @@ RUNTIME_DEPS := claude-agent-sdk jinja2 markitdown[all]
 ANKI_PYTHON := $(HOME)/Library/Application Support/AnkiProgramFiles/.venv/bin/python
 VENDOR_PYTHON ?= python
 
-.PHONY: frontend-build typecheck vendor-python package clean
+.PHONY: build frontend-build typecheck vendor-python package clean
+
+build: package
 
 typecheck:
 	python -m mypy $(ADDON_PACKAGE)

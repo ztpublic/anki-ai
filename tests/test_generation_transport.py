@@ -334,6 +334,59 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         )
         self.assertIn("stderr", events[1][1]["error"]["details"])
 
+    def test_stop_generate_cards_emits_cancelled_event(self) -> None:
+        events: list[tuple[str, JsonObject]] = []
+        pending: dict[str, Callable[..., object]] = {}
+
+        def capture_background_job(
+            operation: Callable[[], JsonObject],
+            on_done: Callable[[JsonObject | BaseException], None],
+        ) -> None:
+            pending["operation"] = operation
+            pending["on_done"] = on_done
+
+        router = TransportRouter()
+        register_generation_transport_handlers(
+            router,
+            FakeGenerationService(),
+            background_runner=capture_background_job,
+            event_emitter=lambda event, payload: events.append((event, payload)),
+        )
+
+        start_response = router.handle_raw_message(
+            request_message(
+                "anki.generation.startGenerateCards",
+                {"sourceText": "Important facts"},
+            )
+        )
+
+        self.assertIsNotNone(start_response)
+        assert start_response is not None
+        job_id = start_response["result"]["jobId"]
+
+        stop_response = router.handle_raw_message(
+            request_message(
+                "anki.generation.stopGenerateCards",
+                {"jobId": job_id},
+                request_id="req-2",
+            )
+        )
+
+        self.assertIsNotNone(stop_response)
+        assert stop_response is not None
+        self.assertTrue(stop_response["ok"])
+        self.assertEqual(stop_response["result"], {"jobId": job_id, "stopped": True})
+        self.assertEqual(events[-1][1]["status"], "cancelled")
+        self.assertEqual(events[-1][1]["jobId"], job_id)
+
+        try:
+            outcome: JsonObject | BaseException = pending["operation"]()
+        except BaseException as error:
+            outcome = error
+        pending["on_done"](outcome)
+
+        self.assertEqual([payload["status"] for _, payload in events], ["cancelled"])
+
 
 if __name__ == "__main__":
     unittest.main()

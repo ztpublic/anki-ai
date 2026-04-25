@@ -21,6 +21,7 @@ import {
   MessageSquareText,
   Settings,
   Sparkles,
+  Square,
   Trash2,
   UploadCloud,
   Wrench,
@@ -91,7 +92,7 @@ type GenerationJobError = {
 
 type GenerationJobEvent = {
   jobId: string;
-  status: "started" | "log" | "succeeded" | "failed";
+  status: "started" | "log" | "succeeded" | "failed" | "cancelled";
   level?: "debug" | "info" | "warning" | "error";
   source?: "app" | "claude" | "llm";
   role?: string;
@@ -400,7 +401,9 @@ function isGenerationJobEvent(value: unknown): value is GenerationJobEvent {
   return (
     typeof value.jobId === "string" &&
     typeof value.status === "string" &&
-    ["started", "log", "succeeded", "failed"].includes(value.status)
+    ["started", "log", "succeeded", "failed", "cancelled"].includes(
+      value.status,
+    )
   );
 }
 
@@ -849,7 +852,10 @@ function AgentMessage({ message }: { message: MessageState }) {
 
 function AgentReasoningPart() {
   return (
-    <details className="rounded-md border border-indigo-100 bg-indigo-50/50 p-2 text-zinc-800">
+    <details
+      open
+      className="rounded-md border border-indigo-100 bg-indigo-50/50 p-2 text-zinc-800"
+    >
       <summary className="cursor-pointer text-sm font-semibold text-indigo-800">
         Thinking
       </summary>
@@ -879,7 +885,10 @@ function AgentToolCallPartView({ part }: { part: AgentMessagePart }) {
   const result = formatToolValue(part.result);
 
   return (
-    <details className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800">
+    <details
+      open
+      className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800"
+    >
       <summary className="cursor-pointer text-sm font-semibold">
         {part.toolName ?? "Tool call"}
       </summary>
@@ -918,7 +927,10 @@ function AgentDataPartView({ part }: { part: AgentMessagePart }) {
         };
 
   return (
-    <details className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800">
+    <details
+      open
+      className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800"
+    >
       <summary className="cursor-pointer text-sm font-semibold">{title}</summary>
       <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700">
         {formatToolValue(value)}
@@ -955,6 +967,8 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
+  const stopGenerationRequestedRef = useRef(false);
+  const generationRequestIdRef = useRef(0);
   const currentCard = generatedCards[currentCardIndex];
   const currentCardType = currentCard ? cardTypeDefinition(currentCard) : null;
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
@@ -1092,12 +1106,23 @@ export function App() {
           return;
         }
 
+        if (event.status === "cancelled") {
+          setGenerationError(null);
+          setIsGenerating(false);
+          setShowAgentMessages(true);
+          acceptsGenerationEventsRef.current = false;
+          activeGenerationJobIdRef.current = null;
+          stopGenerationRequestedRef.current = false;
+          return;
+        }
+
         const message = generationErrorFromJob(event.error);
         setGenerationError(message);
         setIsGenerating(false);
         setShowAgentMessages(true);
         acceptsGenerationEventsRef.current = false;
         activeGenerationJobIdRef.current = null;
+        stopGenerationRequestedRef.current = false;
       },
     );
   }, []);
@@ -1133,10 +1158,40 @@ export function App() {
   };
 
   const handleGenerate = async () => {
-    if (!canGenerate || isGenerating) {
+    if (isGenerating) {
+      stopGenerationRequestedRef.current = true;
+      generationRequestIdRef.current += 1;
+      const jobId = activeGenerationJobIdRef.current;
+      setIsGenerating(false);
+
+      if (jobId === null) {
+        acceptsGenerationEventsRef.current = false;
+        return;
+      }
+
+      acceptsGenerationEventsRef.current = false;
+      activeGenerationJobIdRef.current = null;
+
+      try {
+        await window.AnkiAI.call(
+          "anki.generation.stopGenerateCards",
+          { jobId },
+          { timeoutMs: 5000 },
+        );
+      } catch (error) {
+        setGenerationError(generationErrorMessage(error));
+        setShowAgentMessages(true);
+      }
       return;
     }
 
+    if (!canGenerate) {
+      return;
+    }
+
+    stopGenerationRequestedRef.current = false;
+    const requestId = generationRequestIdRef.current + 1;
+    generationRequestIdRef.current = requestId;
     setGenerationError(null);
     setSaveError(null);
     setSaveSuccessMessage(null);
@@ -1170,10 +1225,31 @@ export function App() {
         },
         { timeoutMs: 10000 },
       );
+
+      if (
+        requestId !== generationRequestIdRef.current ||
+        stopGenerationRequestedRef.current
+      ) {
+        acceptsGenerationEventsRef.current = false;
+        activeGenerationJobIdRef.current = null;
+        await window.AnkiAI.call(
+          "anki.generation.stopGenerateCards",
+          { jobId: result.jobId },
+          { timeoutMs: 5000 },
+        );
+        stopGenerationRequestedRef.current = false;
+        return;
+      }
+
       activeGenerationJobIdRef.current = result.jobId;
     } catch (error) {
+      if (requestId !== generationRequestIdRef.current) {
+        return;
+      }
+
       acceptsGenerationEventsRef.current = false;
       activeGenerationJobIdRef.current = null;
+      stopGenerationRequestedRef.current = false;
       setGenerationError(generationErrorMessage(error));
       setIsGenerating(false);
       setShowAgentMessages(true);
@@ -1407,7 +1483,7 @@ export function App() {
                 id="card-count"
                 type="range"
                 min="1"
-                max="50"
+                max="200"
                 value={cardCount}
                 onChange={(event) => setCardCount(Number(event.target.value))}
                 className="h-2 w-full cursor-pointer appearance-none rounded bg-zinc-300 accent-indigo-600"
@@ -1417,19 +1493,23 @@ export function App() {
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={isGenerating || !canGenerate}
+              disabled={!isGenerating && !canGenerate}
               aria-busy={isGenerating}
-              className="mt-auto flex h-9 w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
+              className={`mt-auto flex h-9 w-full items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold text-white transition-colors disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300 ${
+                isGenerating
+                  ? "bg-rose-600 hover:bg-rose-700"
+                  : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
             >
               {isGenerating ? (
                 <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  Generating
+                  <Square className="h-4 w-4 fill-current" />
+                  Stop generating
                 </>
               ) : (
                 <>
                   <Sparkles className="h-5 w-5" />
-                  Generate {cardCount} {CARD_TYPES[selectedCardTypeId].generationLabel}
+                  Generate
                 </>
               )}
             </button>

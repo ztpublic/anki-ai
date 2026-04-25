@@ -48,4 +48,4 @@
 
 - markdown to html post processing?
 
-- abort generation button
+- a fast way to add a single question using LLM

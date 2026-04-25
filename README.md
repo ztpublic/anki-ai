@@ -389,13 +389,15 @@ again and restart or reload the add-on.
 Build a distributable add-on archive:
 
 ```shell
-make package
+make build
 ```
 
-The package target builds the React frontend, vendors the Python runtime
+The build target builds the React frontend, vendors the Python runtime
 dependencies, then writes `dist/anki_ai.ankiaddon`. The archive contents are
 rooted at the add-on files themselves, as required by Anki, rather than inside an
 extra `anki_ai/` parent directory.
+
+`make package` is kept as an equivalent lower-level target.
 
 ## Configuration
 

@@ -138,7 +138,7 @@ class ClaudeCardGenerationService:
     """Prepare generation materials and collect Claude Code output."""
 
     DEFAULT_CARD_COUNT = 5
-    MAX_CARD_COUNT = 50
+    MAX_CARD_COUNT = 200
 
     def __init__(
         self,
