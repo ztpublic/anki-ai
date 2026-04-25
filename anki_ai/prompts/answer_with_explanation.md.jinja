@@ -76,6 +76,9 @@ Quality rules:
 
 Context-free wording rules:
 - Put the topic, domain, or named concept near the start of the "Front".
+- Expand abbreviations, acronyms, and initialisms in card text unless they are universally known in the field or the card is explicitly testing the abbreviation itself.
+- When keeping an abbreviation, include its full form the first time it appears on that card, such as "retrieval-augmented generation (RAG)".
+- Do not put unexplained abbreviations only in "Back" or "Explanation"; a learner must understand what the term refers to without nearby source context.
 - If the source is a listicle or guide, convert each useful tip into a standalone principle or causal relationship.
 - Never ask which tip is "most important" unless the material names a specific principle as the central thesis.
 - Never refer to item numbers, section order, article titles, or "the 20 tips" as the thing being memorized.
@@ -135,6 +138,7 @@ Before writing `cards.json`, silently audit every candidate card:
 - Is there one expected direct answer?
 - Is the "Back" 25 words or fewer?
 - Does the "Explanation" help understanding without adding unrelated material?
+- Are abbreviations expanded or clearly defined on the card itself?
 - Is it free of "the article", item numbers, and list/meta references?
 - Would a real learner benefit from recalling this outside the source?
 

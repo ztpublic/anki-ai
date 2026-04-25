@@ -46,6 +46,18 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 self.assertIn("Each \"Front\" must be context-free", prompt)
                 self.assertIn("normally 3-18 words", prompt)
                 self.assertIn("Never refer to item numbers", prompt)
+                self.assertIn(
+                    "Expand abbreviations, acronyms, and initialisms in card text",
+                    prompt,
+                )
+                self.assertIn(
+                    "retrieval-augmented generation (RAG)",
+                    prompt,
+                )
+                self.assertIn(
+                    "Are abbreviations expanded or clearly defined on the card itself?",
+                    prompt,
+                )
                 self.assertIn("Delete or rewrite any card that fails the audit.", prompt)
                 self.assertIn('Each flashcard must be a JSON object with exactly these fields:', prompt)
                 self.assertIn('- "Front": string', prompt)
@@ -548,6 +560,10 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             def runner(prompt: str, workspace: Path) -> dict[str, str]:
                 self.assertIn(
                     "answer-with-explanation flashcards",
+                    prompt,
+                )
+                self.assertIn(
+                    "Expand abbreviations, acronyms, and initialisms in card text",
                     prompt,
                 )
                 self.assertIn('- "Explanation": string', prompt)
