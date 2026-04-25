@@ -185,8 +185,8 @@ to markdown files in that directory, runs Claude Code with that workspace as the
 current directory, and expects a single `cards.json` file in the workspace root.
 Pasted text is optional; if the user only attaches files, no `user_input.txt`
 file is created.
-Each app-level card type uses its own Jinja2 prompt template and output
-normalizer.
+Each app-level card type uses a small Jinja2 prompt template that configures a
+shared generation prompt, plus its own output normalizer.
 
 Bridge request:
 
