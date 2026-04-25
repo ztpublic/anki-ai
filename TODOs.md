@@ -49,3 +49,5 @@
 - markdown to html post processing?
 
 - a fast way to add a single question using LLM
+
+- auto card count mode
