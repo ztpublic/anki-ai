@@ -45,6 +45,7 @@ class FakeGenerationService:
                     "source": "llm",
                     "role": "LLM -> Claude Code",
                     "message": "LLM -> Claude Code: draft cards",
+                    "part": {"type": "text", "text": "draft cards"},
                 }
             )
         self.calls.append(
@@ -268,6 +269,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertEqual(events[1][1]["message"], "LLM -> Claude Code: draft cards")
         self.assertEqual(events[1][1]["source"], "llm")
         self.assertEqual(events[1][1]["role"], "LLM -> Claude Code")
+        self.assertEqual(events[1][1]["part"], {"type": "text", "text": "draft cards"})
         self.assertEqual(events[2][1]["result"]["cards"][0]["front"], "Front")
 
     def test_start_generate_cards_reports_event_unavailable_without_emitter(

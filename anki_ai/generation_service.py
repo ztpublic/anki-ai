@@ -63,6 +63,7 @@ class GenerationLogEvent(TypedDict, total=False):
     source: GenerationLogSource
     role: str
     message: str
+    part: dict[str, Any]
 
 
 class MaterialConverter(Protocol):
@@ -507,6 +508,7 @@ async def _run_claude_generation_async(
         stderr=handle_stderr,
         env=_generation_environment(),
         extra_args={"debug-to-stderr": None},
+        thinking={"type": "adaptive", "display": "summarized"},
     )
 
     try:
@@ -565,6 +567,7 @@ def _emit_generation_log(
     level: GenerationLogLevel = "info",
     source: GenerationLogSource = "app",
     role: str | None = None,
+    part: dict[str, Any] | None = None,
 ) -> None:
     if log_sink is None:
         return
@@ -576,6 +579,8 @@ def _emit_generation_log(
     }
     if role is not None:
         event["role"] = role
+    if part is not None:
+        event["part"] = part
     log_sink(event)
 
 
@@ -588,15 +593,16 @@ def _emit_claude_message_logs(
 
     message_type = type(message).__name__
     if message_type == "UserMessage":
-        for log_message in _content_messages(
+        for log_event in _content_log_events(
             getattr(message, "content", None),
             role="Claude Code -> LLM",
         ):
             _emit_generation_log(
                 log_sink,
-                log_message,
+                log_event["message"],
                 source="llm",
                 role="Claude Code -> LLM",
+                part=log_event.get("part"),
             )
         return
 
@@ -611,49 +617,99 @@ def _emit_claude_message_logs(
                 role="LLM -> Claude Code",
             )
 
-        for log_message in _content_messages(
+        for log_event in _content_log_events(
             getattr(message, "content", None),
             role="LLM -> Claude Code",
         ):
             _emit_generation_log(
                 log_sink,
-                log_message,
+                log_event["message"],
                 source="llm",
                 role="LLM -> Claude Code",
+                part=log_event.get("part"),
             )
 
 
 def _content_messages(content: Any, *, role: str) -> list[str]:
+    return [event["message"] for event in _content_log_events(content, role=role)]
+
+
+def _content_log_events(content: Any, *, role: str) -> list[GenerationLogEvent]:
     if isinstance(content, str):
         text = content.strip()
-        return [f"{role}: {text}"] if text else []
+        return [
+            {
+                "message": f"{role}: {text}",
+                "part": {"type": "text", "text": text},
+            }
+        ] if text else []
 
     if not isinstance(content, list):
         return []
 
-    messages: list[str] = []
+    events: list[GenerationLogEvent] = []
     for block in content:
-        block_message = _content_block_message(block, role=role)
-        if block_message is not None:
-            messages.append(block_message)
-    return messages
+        block_event = _content_block_log_event(block, role=role)
+        if block_event is not None:
+            events.append(block_event)
+    return events
 
 
 def _content_block_message(block: Any, *, role: str) -> str | None:
+    event = _content_block_log_event(block, role=role)
+    return event["message"] if event is not None else None
+
+
+def _content_block_log_event(
+    block: Any,
+    *,
+    role: str,
+) -> GenerationLogEvent | None:
     block_type = type(block).__name__
 
     text = getattr(block, "text", None)
     if isinstance(text, str) and text.strip():
-        return f"{role}: {text.strip()}"
+        normalized_text = text.strip()
+        return {
+            "message": f"{role}: {normalized_text}",
+            "part": {"type": "text", "text": normalized_text},
+        }
 
     if block_type == "ThinkingBlock":
-        return f"{role}: [thinking block received]"
+        thinking = getattr(block, "thinking", None)
+        if isinstance(thinking, str) and thinking.strip():
+            normalized_thinking = thinking.strip()
+            part: dict[str, Any] = {
+                "type": "reasoning",
+                "text": normalized_thinking,
+            }
+            signature = getattr(block, "signature", None)
+            if isinstance(signature, str) and signature:
+                part["signature"] = signature
+            return {
+                "message": f"{role} thinking: {normalized_thinking}",
+                "part": part,
+            }
+        return None
 
     tool_name = getattr(block, "name", None)
     tool_input = getattr(block, "input", None)
     if isinstance(tool_name, str):
         suffix = f" {_compact_json(tool_input)}" if tool_input is not None else ""
-        return f"{role} tool request: {tool_name}{suffix}"
+        tool_id = getattr(block, "id", None)
+        part = {
+            "type": "tool-call",
+            "toolName": tool_name,
+            "argsText": _compact_json(tool_input) if tool_input is not None else "",
+        }
+        if isinstance(tool_id, str) and tool_id:
+            part["toolCallId"] = tool_id
+        if block_type == "ServerToolUseBlock":
+            part["serverSide"] = True
+        return {
+            "message": f"{role} tool request: {tool_name}{suffix}",
+            "part": part,
+        }
 
     tool_use_id = getattr(block, "tool_use_id", None)
     tool_content = getattr(block, "content", None)
@@ -662,7 +718,22 @@ def _content_block_message(block: Any, *, role: str) -> str | None:
         state = " error" if is_error else ""
         identifier = f" {tool_use_id}" if tool_use_id else ""
         summary = _compact_json(tool_content) if tool_content is not None else ""
-        return f"{role} tool result{state}{identifier}: {summary}".rstrip()
+        return {
+            "message": f"{role} tool result{state}{identifier}: {summary}".rstrip(),
+            "part": {
+                "type": "data",
+                "name": (
+                    "server-tool-result"
+                    if block_type == "ServerToolResultBlock"
+                    else "tool-result"
+                ),
+                "data": {
+                    "toolUseId": tool_use_id,
+                    "content": tool_content,
+                    "isError": is_error,
+                },
+            },
+        }
 
     return None
 

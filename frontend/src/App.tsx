@@ -1,17 +1,29 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  AssistantRuntimeProvider,
+  MessagePartPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useExternalStoreRuntime,
+  type MessageState,
+  type ThreadMessageLike,
+} from "@assistant-ui/react";
+import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FileText,
+  Info,
   Library,
   Loader2,
+  MessageSquareText,
   Settings,
   Sparkles,
-  Terminal,
   Trash2,
   UploadCloud,
+  Wrench,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -84,15 +96,61 @@ type GenerationJobEvent = {
   source?: "app" | "claude" | "llm";
   role?: string;
   message?: string;
+  part?: LlmTracePartPayload;
   result?: GenerateCardsResponse;
   error?: GenerationJobError;
 };
 
-type GenerationLogEntry = {
+type AgentTraceLevel = "debug" | "info" | "warning" | "error";
+
+type LlmTracePartPayload =
+  | {
+      type: "text" | "reasoning";
+      text: string;
+    }
+  | {
+      type: "tool-call";
+      toolCallId?: string;
+      toolName: string;
+      argsText: string;
+      serverSide?: boolean;
+    }
+  | {
+      type: "data";
+      name: string;
+      data: unknown;
+    };
+
+type AgentTraceMessage = {
   id: string;
-  timestamp: string;
-  level: "debug" | "info" | "warning" | "error";
-  message: string;
+  role: "assistant" | "user";
+  kind: "model_message" | "tool_call" | "agent_event" | "reasoning";
+  label: string;
+  level: AgentTraceLevel;
+  source: "llm";
+  part: LlmTracePartPayload;
+  status: "streaming" | "done" | "error";
+  createdAt: number;
+};
+
+type AgentMessagePart = {
+  type: string;
+  text?: string;
+  name?: string;
+  data?: unknown;
+  toolName?: string;
+  toolCallId?: string;
+  args?: unknown;
+  argsText?: string;
+  result?: unknown;
+  image?: string;
+  filename?: string;
+  dataRendererUI?: React.ReactNode;
+  toolUI?: React.ReactNode;
+  status?: {
+    type: string;
+    reason?: string;
+  };
 };
 
 type InsertCardPayload = {
@@ -354,14 +412,6 @@ function generationErrorFromJob(error: GenerationJobError | undefined): string {
   return "Cards could not be generated.";
 }
 
-function logTimestamp(): string {
-  return new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function fileExtension(fileName: string): string {
   const trimmedName = fileName.trim().toLowerCase();
   const lastDotIndex = trimmedName.lastIndexOf(".");
@@ -374,6 +424,507 @@ function fileExtension(fileName: string): string {
 
 function isSupportedAttachmentFile(file: File): boolean {
   return SUPPORTED_ATTACHMENT_EXTENSION_SET.has(fileExtension(file.name));
+}
+
+function traceMessageMetadata(message: AgentTraceMessage) {
+  return {
+    kind: message.kind,
+    label: message.label,
+    level: message.level,
+    source: message.source,
+    role: message.role,
+  };
+}
+
+function traceMessageStatus(
+  message: AgentTraceMessage,
+): ThreadMessageLike["status"] {
+  if (message.level === "error") {
+    return { type: "incomplete", reason: "error" };
+  }
+
+  if (
+    (message.kind === "model_message" || message.kind === "reasoning") &&
+    message.status === "streaming"
+  ) {
+    return { type: "running" };
+  }
+
+  return { type: "complete", reason: "stop" };
+}
+
+function traceContent(message: AgentTraceMessage): ThreadMessageLike["content"] {
+  const part = message.part;
+
+  if (part.type === "tool-call") {
+    if (message.role === "assistant") {
+      return [
+        {
+          type: "tool-call",
+          toolCallId: part.toolCallId ?? message.id,
+          toolName: part.toolName,
+          argsText: part.argsText,
+        },
+      ];
+    }
+
+    return [
+      {
+        type: "data",
+        name: "tool-call",
+        data: part,
+      },
+    ];
+  }
+
+  if (part.type === "data") {
+    return [
+      {
+        type: "data",
+        name: part.name,
+        data: part.data,
+      },
+    ];
+  }
+
+  if (part.type === "reasoning" && message.role === "assistant") {
+    return [
+      {
+        type: "reasoning",
+        text: part.text,
+      },
+    ];
+  }
+
+  return [
+    {
+      type: "text",
+      text: part.text,
+    },
+  ];
+}
+
+function convertTraceMessage(message: AgentTraceMessage): ThreadMessageLike {
+  const base = {
+    id: message.id,
+    role: message.role,
+    createdAt: new Date(message.createdAt),
+    content: traceContent(message),
+    metadata: {
+      custom: traceMessageMetadata(message),
+    },
+  };
+
+  if (message.role === "assistant") {
+    return {
+      ...base,
+      role: "assistant",
+      status: traceMessageStatus(message),
+    };
+  }
+
+  return {
+    ...base,
+    role: "user",
+  };
+}
+
+function readOnlyTranscriptError(): never {
+  throw new Error("The generation transcript is read-only.");
+}
+
+function AgentTranscriptRuntimeProvider({
+  messages,
+  isRunning,
+  children,
+}: {
+  messages: AgentTraceMessage[];
+  isRunning: boolean;
+  children: React.ReactNode;
+}) {
+  const runtime = useExternalStoreRuntime<AgentTraceMessage>({
+    messages,
+    isRunning,
+    convertMessage: convertTraceMessage,
+    onNew: async () => {
+      readOnlyTranscriptError();
+    },
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  );
+}
+
+function stripRolePrefix(message: string, role: string | undefined): string {
+  if (role && message.startsWith(`${role}:`)) {
+    return message.slice(role.length + 1).trim();
+  }
+
+  return message.trim();
+}
+
+function traceRoleFromEvent(role: string | undefined): AgentTraceMessage["role"] {
+  return role === "Claude Code -> LLM" ? "user" : "assistant";
+}
+
+function traceLabelFromEvent(role: string | undefined): string {
+  if (role === "Claude Code -> LLM") {
+    return "Agent -> LLM";
+  }
+
+  if (role === "LLM -> Claude Code") {
+    return "LLM -> Agent";
+  }
+
+  return role ?? "LLM message";
+}
+
+function traceKindFromPart(part: LlmTracePartPayload): AgentTraceMessage["kind"] {
+  if (part.type === "tool-call") {
+    return "tool_call";
+  }
+
+  if (part.type === "reasoning") {
+    return "reasoning";
+  }
+
+  if (part.type === "data") {
+    return "agent_event";
+  }
+
+  return "model_message";
+}
+
+function traceFromGenerationLogEvent(
+  event: GenerationJobEvent,
+): AgentTraceMessage | null {
+  if (event.source !== "llm") {
+    return null;
+  }
+
+  const message = event.message?.trim();
+  if (!message) {
+    return null;
+  }
+
+  const level = event.level ?? "info";
+  const createdAt = Date.now();
+  const role = event.role;
+  const traceRole = traceRoleFromEvent(role);
+  const label = traceLabelFromEvent(role);
+
+  if (event.part !== undefined) {
+    return {
+      id: createCardId(),
+      role: traceRole,
+      kind: traceKindFromPart(event.part),
+      label,
+      level,
+      source: "llm",
+      part: event.part,
+      status: level === "error" ? "error" : "done",
+      createdAt,
+    };
+  }
+
+  const toolRequestMatch = message.match(
+    /^(.*?) tool request: ([^\s]+)(?:\s+([\s\S]*))?$/,
+  );
+  if (toolRequestMatch) {
+    const argsText = toolRequestMatch[3]?.trim() ?? "";
+    return {
+      id: createCardId(),
+      role: traceRole,
+      kind: "tool_call",
+      label,
+      level,
+      source: "llm",
+      part: {
+        type: "tool-call",
+        toolCallId: createCardId(),
+        toolName: toolRequestMatch[2] ?? "Tool",
+        argsText,
+      },
+      status: level === "error" ? "error" : "done",
+      createdAt,
+    };
+  }
+
+  const toolResultMatch = message.match(
+    /^(.*?) tool result( error)?(?:\s+([^:]+))?:?\s*([\s\S]*)$/,
+  );
+  if (toolResultMatch) {
+    return {
+      id: createCardId(),
+      role: traceRole,
+      kind: "agent_event",
+      label: toolResultMatch[2] ? "Tool result failed" : "Tool result",
+      level: toolResultMatch[2] ? "error" : level,
+      source: "llm",
+      part: {
+        type: "data",
+        name: "tool-result",
+        data: {
+          content: toolResultMatch[4]?.trim() || undefined,
+          isError: Boolean(toolResultMatch[2]),
+        },
+      },
+      status: toolResultMatch[2] ? "error" : "done",
+      createdAt,
+    };
+  }
+
+  return {
+    id: createCardId(),
+    role: traceRole,
+    kind: "model_message",
+    label,
+    level,
+    source: "llm",
+    part: {
+      type: "text",
+      text: stripRolePrefix(message, role),
+    },
+    status: level === "error" ? "error" : "done",
+    createdAt,
+  };
+}
+
+function traceLevelClass(level: unknown): string {
+  if (level === "error") {
+    return "border-rose-200 bg-rose-50 text-rose-900";
+  }
+
+  if (level === "warning") {
+    return "border-amber-200 bg-amber-50 text-amber-900";
+  }
+
+  return "border-zinc-200 bg-white text-zinc-800";
+}
+
+function traceAccentClass(level: unknown): string {
+  if (level === "error") {
+    return "bg-rose-500";
+  }
+
+  if (level === "warning") {
+    return "bg-amber-500";
+  }
+
+  return "bg-indigo-500";
+}
+
+function traceIcon(kind: unknown) {
+  if (kind === "tool_call") {
+    return <Wrench className="h-3.5 w-3.5" />;
+  }
+
+  if (kind === "reasoning") {
+    return <Sparkles className="h-3.5 w-3.5" />;
+  }
+
+  if (kind === "agent_event") {
+    return <Info className="h-3.5 w-3.5" />;
+  }
+
+  return <Bot className="h-3.5 w-3.5" />;
+}
+
+function traceLabel(message: MessageState): string {
+  const custom = message.metadata.custom;
+  const label = custom.label;
+  if (typeof label === "string" && label.trim()) {
+    return label;
+  }
+
+  return "LLM message";
+}
+
+function formatToolValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function AgentTranscript() {
+  return (
+    <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
+      <ThreadPrimitive.Viewport
+        autoScroll
+        turnAnchor="bottom"
+        className="min-h-0 flex-1 overflow-y-auto bg-white p-4"
+      >
+        <ThreadPrimitive.Empty>
+          <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+            Waiting for LLM messages...
+          </div>
+        </ThreadPrimitive.Empty>
+        <ThreadPrimitive.Messages>
+          {({ message }: { message: MessageState }) => (
+            <AgentMessage message={message} />
+          )}
+        </ThreadPrimitive.Messages>
+      </ThreadPrimitive.Viewport>
+    </ThreadPrimitive.Root>
+  );
+}
+
+function AgentMessage({ message }: { message: MessageState }) {
+  const custom = message.metadata.custom;
+  const kind = custom.kind;
+  const level = custom.level;
+
+  return (
+    <MessagePrimitive.Root className="mb-3 last:mb-0">
+      <div
+        className={`relative overflow-hidden rounded-md border p-3 text-sm shadow-sm ${traceLevelClass(
+          level,
+        )}`}
+      >
+        <div
+          className={`absolute left-0 top-0 h-full w-1 ${traceAccentClass(
+            level,
+          )}`}
+        />
+        <div className="mb-2 flex min-w-0 items-center gap-2 pl-1 text-xs font-semibold text-zinc-600">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500">
+            {traceIcon(kind)}
+          </span>
+          <span className="min-w-0 truncate">{traceLabel(message)}</span>
+        </div>
+        <div className="pl-1">
+          <MessagePrimitive.Parts>
+            {({ part }: { part: AgentMessagePart }) => {
+              if (part.type === "text") {
+                return <AgentTextPart />;
+              }
+
+              if (part.type === "reasoning") {
+                return <AgentReasoningPart />;
+              }
+
+              if (part.type === "tool-call") {
+                return <AgentToolCallPartView part={part} />;
+              }
+
+              if (part.type === "data") {
+                return <AgentDataPartView part={part} />;
+              }
+
+              if (part.type === "image" && part.image) {
+                return (
+                  <img
+                    src={part.image}
+                    alt={part.filename ?? "LLM image"}
+                    className="max-h-72 max-w-full rounded border border-zinc-200"
+                  />
+                );
+              }
+
+              if (part.type === "file") {
+                return <AgentDataPartView part={part} />;
+              }
+
+              return null;
+            }}
+          </MessagePrimitive.Parts>
+        </div>
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AgentReasoningPart() {
+  return (
+    <details className="rounded-md border border-indigo-100 bg-indigo-50/50 p-2 text-zinc-800">
+      <summary className="cursor-pointer text-sm font-semibold text-indigo-800">
+        Thinking
+      </summary>
+      <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
+        <MessagePartPrimitive.Text />
+        <MessagePartPrimitive.InProgress>
+          <span className="ml-1 animate-pulse text-indigo-600">▊</span>
+        </MessagePartPrimitive.InProgress>
+      </div>
+    </details>
+  );
+}
+
+function AgentTextPart() {
+  return (
+    <div className="whitespace-pre-wrap break-words leading-6 text-inherit [overflow-wrap:anywhere]">
+      <MessagePartPrimitive.Text />
+      <MessagePartPrimitive.InProgress>
+        <span className="ml-1 animate-pulse text-indigo-600">▊</span>
+      </MessagePartPrimitive.InProgress>
+    </div>
+  );
+}
+
+function AgentToolCallPartView({ part }: { part: AgentMessagePart }) {
+  const args = formatToolValue(part.args) || part.argsText || "";
+  const result = formatToolValue(part.result);
+
+  return (
+    <details className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800">
+      <summary className="cursor-pointer text-sm font-semibold">
+        {part.toolName ?? "Tool call"}
+      </summary>
+      {args ? (
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700">
+          {args}
+        </pre>
+      ) : null}
+      {result ? (
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700">
+          {result}
+        </pre>
+      ) : null}
+    </details>
+  );
+}
+
+function AgentDataPartView({ part }: { part: AgentMessagePart }) {
+  const rendered = part.dataRendererUI;
+  if (rendered) {
+    return rendered;
+  }
+
+  const title =
+    part.name === "tool-result"
+      ? "Tool result"
+      : part.name === "server-tool-result"
+        ? "Server tool result"
+        : part.name ?? part.filename ?? "Data";
+  const value =
+    part.data !== undefined
+      ? part.data
+      : {
+          filename: part.filename,
+          text: part.text,
+        };
+
+  return (
+    <details className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-zinc-800">
+      <summary className="cursor-pointer text-sm font-semibold">{title}</summary>
+      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700">
+        {formatToolValue(value)}
+      </pre>
+    </details>
+  );
 }
 
 export function App() {
@@ -396,13 +947,12 @@ export function App() {
     null,
   );
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const [generationLogs, setGenerationLogs] = useState<GenerationLogEntry[]>(
-    [],
-  );
-  const [showGenerationConsole, setShowGenerationConsole] = useState(false);
+  const [agentTraceMessages, setAgentTraceMessages] = useState<
+    AgentTraceMessage[]
+  >([]);
+  const [showAgentMessages, setShowAgentMessages] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const generationLogEndRef = useRef<HTMLDivElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
   const currentCard = generatedCards[currentCardIndex];
@@ -412,21 +962,6 @@ export function App() {
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
   const canSaveCards =
     selectedDeck !== null && generatedCards.length > 0 && !isSavingCards;
-
-  const appendGenerationLog = (
-    message: string,
-    level: GenerationLogEntry["level"] = "info",
-  ) => {
-    setGenerationLogs((previousLogs) => [
-      ...previousLogs,
-      {
-        id: createCardId(),
-        timestamp: logTimestamp(),
-        level,
-        message,
-      },
-    ]);
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -514,15 +1049,16 @@ export function App() {
         activeGenerationJobIdRef.current = event.jobId;
 
         if (event.status === "started") {
-          appendGenerationLog(
-            event.message ?? "Started Claude Code card generation.",
-          );
           return;
         }
 
         if (event.status === "log") {
-          if (event.message) {
-            appendGenerationLog(event.message, event.level ?? "info");
+          const traceMessage = traceFromGenerationLogEvent(event);
+          if (traceMessage !== null) {
+            setAgentTraceMessages((previousMessages) => [
+              ...previousMessages,
+              traceMessage,
+            ]);
           }
           return;
         }
@@ -530,10 +1066,9 @@ export function App() {
         if (event.status === "succeeded") {
           if (!event.result) {
             const message = "Generation finished without a result payload.";
-            appendGenerationLog(message, "error");
             setGenerationError(message);
             setIsGenerating(false);
-            setShowGenerationConsole(true);
+            setShowAgentMessages(true);
             acceptsGenerationEventsRef.current = false;
             activeGenerationJobIdRef.current = null;
             return;
@@ -551,26 +1086,21 @@ export function App() {
           setCurrentCardIndex(0);
           setGenerationError(null);
           setIsGenerating(false);
-          setShowGenerationConsole(false);
+          setShowAgentMessages(false);
           acceptsGenerationEventsRef.current = false;
           activeGenerationJobIdRef.current = null;
           return;
         }
 
         const message = generationErrorFromJob(event.error);
-        appendGenerationLog(message, "error");
         setGenerationError(message);
         setIsGenerating(false);
-        setShowGenerationConsole(true);
+        setShowAgentMessages(true);
         acceptsGenerationEventsRef.current = false;
         activeGenerationJobIdRef.current = null;
       },
     );
   }, []);
-
-  useEffect(() => {
-    generationLogEndRef.current?.scrollIntoView({ block: "end" });
-  }, [generationLogs]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -611,15 +1141,8 @@ export function App() {
     setSaveError(null);
     setSaveSuccessMessage(null);
     setIsGenerating(true);
-    setShowGenerationConsole(true);
-    setGenerationLogs([
-      {
-        id: createCardId(),
-        timestamp: logTimestamp(),
-        level: "info",
-        message: "Preparing source materials.",
-      },
-    ]);
+    setShowAgentMessages(true);
+    setAgentTraceMessages([]);
     setGeneratedCards([]);
     setCurrentCardIndex(0);
     activeGenerationJobIdRef.current = null;
@@ -648,14 +1171,12 @@ export function App() {
         { timeoutMs: 10000 },
       );
       activeGenerationJobIdRef.current = result.jobId;
-      appendGenerationLog(`Generation job ${result.jobId} is running.`);
     } catch (error) {
       acceptsGenerationEventsRef.current = false;
       activeGenerationJobIdRef.current = null;
       setGenerationError(generationErrorMessage(error));
       setIsGenerating(false);
-      setShowGenerationConsole(true);
-      appendGenerationLog(generationErrorMessage(error), "error");
+      setShowAgentMessages(true);
     }
   };
 
@@ -924,12 +1445,12 @@ export function App() {
         </section>
 
         <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col bg-zinc-50">
-          {showGenerationConsole ? (
+          {showAgentMessages ? (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50">
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
                 <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-800">
-                  <Terminal className="h-4 w-4 shrink-0 text-zinc-500" />
-                  LLM Messages
+                  <MessageSquareText className="h-4 w-4 shrink-0 text-zinc-500" />
+                  LLM Agent Messages
                 </h2>
                 <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-zinc-500">
                   {isGenerating ? (
@@ -944,34 +1465,13 @@ export function App() {
                   )}
                 </div>
               </div>
-              <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-white p-4 font-mono text-xs leading-5 text-zinc-700">
-                {generationLogs.length === 0 ? (
-                  <div className="text-zinc-500">Waiting for logs...</div>
-                ) : (
-                  generationLogs.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={
-                        entry.level === "error"
-                          ? "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-rose-700 [overflow-wrap:anywhere]"
-                          : entry.level === "warning"
-                            ? "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-amber-700 [overflow-wrap:anywhere]"
-                            : "flex min-w-0 max-w-full gap-3 whitespace-pre-wrap break-words text-zinc-700 [overflow-wrap:anywhere]"
-                      }
-                    >
-                      <span className="shrink-0 text-zinc-400">
-                        {entry.timestamp}
-                      </span>
-                      <span className="min-w-0 flex-1">{entry.message}</span>
-                    </div>
-                  ))
-                )}
-                {isGenerating ? (
-                  <div className="mt-1 text-indigo-600">
-                    <span className="animate-pulse">_</span>
-                  </div>
-                ) : null}
-                <div ref={generationLogEndRef} />
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <AgentTranscriptRuntimeProvider
+                  messages={agentTraceMessages}
+                  isRunning={isGenerating}
+                >
+                  <AgentTranscript />
+                </AgentTranscriptRuntimeProvider>
               </div>
             </div>
           ) : generatedCards.length > 0 && currentCard && currentCardType ? (

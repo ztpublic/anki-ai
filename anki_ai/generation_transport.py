@@ -102,10 +102,13 @@ class GenerationTransportHandlers:
             }
             source = event.get("source")
             role = event.get("role")
+            part = event.get("part")
             if source is not None:
                 payload["source"] = source
             if role is not None:
                 payload["role"] = role
+            if part is not None:
+                payload["part"] = part
             emit_job(payload)
 
         def operation() -> GenerationResult:

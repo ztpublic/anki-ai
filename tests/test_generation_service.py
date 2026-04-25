@@ -875,8 +875,14 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             def __init__(self, text: str) -> None:
                 self.text = text
 
+        class ThinkingBlock:
+            def __init__(self, thinking: str) -> None:
+                self.thinking = thinking
+                self.signature = "thinking-signature"
+
         class ToolUseBlock:
             def __init__(self) -> None:
+                self.id = "tool-1"
                 self.name = "Write"
                 self.input = {"file_path": "cards.json"}
 
@@ -888,6 +894,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.content = [
                     TextBlock("I will write cards."),
+                    ThinkingBlock("I should create concise cards."),
                     ToolUseBlock(),
                 ]
                 self.error = None
@@ -900,9 +907,12 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 self.session_id = "session-1"
                 self.stop_reason = "end_turn"
 
+        captured_options: object | None = None
+
         async def fake_query(*, prompt: str, options: object) -> object:
+            nonlocal captured_options
             _ = prompt
-            _ = options
+            captured_options = options
             yield UserMessage()
             yield AssistantMessage()
             yield ResultMessage()
@@ -931,10 +941,36 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             [
                 "Claude Code -> LLM: Material summary",
                 "LLM -> Claude Code: I will write cards.",
+                "LLM -> Claude Code thinking: I should create concise cards.",
                 'LLM -> Claude Code tool request: Write {"file_path": "cards.json"}',
             ],
         )
         self.assertTrue(all(log["source"] == "llm" for log in logs))
+        self.assertEqual(
+            logs[0]["part"],
+            {"type": "text", "text": "Material summary"},
+        )
+        self.assertEqual(
+            logs[2]["part"],
+            {
+                "type": "reasoning",
+                "text": "I should create concise cards.",
+                "signature": "thinking-signature",
+            },
+        )
+        self.assertEqual(
+            logs[3]["part"],
+            {
+                "type": "tool-call",
+                "toolCallId": "tool-1",
+                "toolName": "Write",
+                "argsText": '{"file_path": "cards.json"}',
+            },
+        )
+        self.assertEqual(
+            getattr(captured_options, "thinking", None),
+            {"type": "adaptive", "display": "summarized"},
+        )
 
 
 if __name__ == "__main__":
