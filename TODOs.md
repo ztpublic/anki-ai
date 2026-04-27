@@ -51,3 +51,18 @@
 - a fast way to add a single question using LLM
 
 - auto card count mode
+
+- if cannot be converted, fallback to plain text
+
+- add a instruction prompt box
+
+- LLM enhanced reviewing
+  - question validation
+  - question re-phrase
+  - answer validation
+  - answer re-phrase
+  - explanation
+  - re-write explanation
+
+- add a mode to append raw materials (don't convert to markdown for the user)
+- suppor append/drag folder/s
