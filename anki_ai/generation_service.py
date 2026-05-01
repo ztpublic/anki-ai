@@ -20,6 +20,14 @@ from .card_generation_workflows import (
     GeneratedCard,
     get_generation_workflow,
 )
+from .card_regeneration_workflows import (
+    CARD_REGENERATION_INPUT_FILENAME,
+    REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID,
+    REGENERATE_ANSWER_WORKFLOW_ID,
+    CardRegenerationWorkflowError,
+    RegeneratedCardFields,
+    get_regeneration_workflow,
+)
 from .card_types import (
     CardTypeError,
     DEFAULT_CARD_TYPE_ID,
@@ -46,6 +54,11 @@ class GenerationRunInfo(TypedDict, total=False):
 
 class GenerationResult(TypedDict):
     cards: list[GeneratedCard]
+    run: GenerationRunInfo
+
+
+class CardRegenerationResult(TypedDict):
+    fields: RegeneratedCardFields
     run: GenerationRunInfo
 
 
@@ -346,6 +359,170 @@ class ClaudeCardGenerationService:
 
         return {
             "cards": self._normalize_cards(parsed_cards, card_type_id),
+            "run": run_info,
+        }
+
+    def regenerate_answer(
+        self,
+        *,
+        question: str,
+        answer: str,
+        explanation: str | None = None,
+        log_sink: GenerationLogSink | None = None,
+    ) -> CardRegenerationResult:
+        return self._regenerate_card_fields(
+            workflow_id=REGENERATE_ANSWER_WORKFLOW_ID,
+            question=question,
+            answer=answer,
+            explanation=explanation,
+            log_sink=log_sink,
+        )
+
+    def regenerate_answer_and_explanation(
+        self,
+        *,
+        question: str,
+        answer: str,
+        explanation: str | None = None,
+        log_sink: GenerationLogSink | None = None,
+    ) -> CardRegenerationResult:
+        return self._regenerate_card_fields(
+            workflow_id=REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID,
+            question=question,
+            answer=answer,
+            explanation=explanation,
+            log_sink=log_sink,
+        )
+
+    def _regenerate_card_fields(
+        self,
+        *,
+        workflow_id: str,
+        question: str,
+        answer: str,
+        explanation: str | None,
+        log_sink: GenerationLogSink | None,
+    ) -> CardRegenerationResult:
+        if not question.strip():
+            raise GenerationServiceError(
+                "missing_regeneration_input",
+                "Provide the card question to regenerate an answer.",
+            )
+        if not answer.strip():
+            raise GenerationServiceError(
+                "missing_regeneration_input",
+                "Provide the original answer to regenerate an answer.",
+            )
+
+        try:
+            workflow = get_regeneration_workflow(workflow_id)
+        except CardRegenerationWorkflowError as error:
+            raise GenerationServiceError(error.code, error.message, error.details) from error
+
+        workspace_path = self._workspace_factory()
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        input_path = workspace_path / CARD_REGENERATION_INPUT_FILENAME
+        input_payload = {
+            "Question": question,
+            "OriginalAnswer": answer,
+            "OriginalExplanation": "" if explanation is None else explanation,
+        }
+        input_path.write_text(
+            json.dumps(input_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        try:
+            prompt = workflow.build_prompt()
+        except CardRegenerationWorkflowError as error:
+            raise GenerationServiceError(error.code, error.message, error.details) from error
+
+        run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
+        try:
+            run_metadata = self._run_claude(prompt, workspace_path, log_sink)
+        except GenerationServiceError as error:
+            error.details = self._merge_details(
+                error.details,
+                {"workspacePath": str(workspace_path)},
+            )
+            raise
+        except Exception as error:
+            if self._matches_error_name(error, "CLINotFoundError"):
+                raise GenerationServiceError(
+                    "claude_cli_not_found",
+                    "Claude Code CLI is not available in the current environment.",
+                    {
+                        "workspacePath": str(workspace_path),
+                        "errorType": type(error).__name__,
+                        "error": str(error),
+                        "runtime": _runtime_diagnostics(),
+                    },
+                ) from error
+            if self._matches_error_name(
+                error,
+                "CLIConnectionError",
+                "ProcessError",
+                "ClaudeSDKError",
+            ):
+                raise GenerationServiceError(
+                    "claude_generation_failed",
+                    "Claude Code generation failed.",
+                    {
+                        "workspacePath": str(workspace_path),
+                        "errorType": type(error).__name__,
+                        "error": str(error),
+                        "runtime": _runtime_diagnostics(),
+                    },
+                ) from error
+            raise GenerationServiceError(
+                "claude_generation_failed",
+                "Claude Code generation failed.",
+                {
+                    "workspacePath": str(workspace_path),
+                    "errorType": type(error).__name__,
+                    "error": str(error),
+                    "runtime": _runtime_diagnostics(),
+                },
+            ) from error
+
+        if "sessionId" in run_metadata:
+            run_info["sessionId"] = run_metadata["sessionId"]
+        if "stopReason" in run_metadata:
+            run_info["stopReason"] = run_metadata["stopReason"]
+
+        output_path = workspace_path / workflow.output_filename
+        if not output_path.is_file():
+            raise GenerationServiceError(
+                "missing_regenerated_card_output",
+                f"Claude Code did not create {workflow.output_filename} in the workspace root.",
+                {"workspacePath": str(workspace_path)},
+            )
+
+        try:
+            raw_output = output_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise GenerationServiceError(
+                "regenerated_card_output_unreadable",
+                f"{workflow.output_filename} could not be read.",
+                {"workspacePath": str(workspace_path)},
+            ) from error
+
+        try:
+            parsed_output = json.loads(raw_output)
+        except json.JSONDecodeError as error:
+            raise GenerationServiceError(
+                "invalid_regenerated_card_output",
+                f"{workflow.output_filename} was not valid JSON.",
+                {"workspacePath": str(workspace_path)},
+            ) from error
+
+        try:
+            fields = workflow.normalize_output(parsed_output)
+        except CardRegenerationWorkflowError as error:
+            raise GenerationServiceError(error.code, error.message, error.details) from error
+
+        return {
+            "fields": fields,
             "run": run_info,
         }
 

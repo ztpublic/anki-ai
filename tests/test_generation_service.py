@@ -632,6 +632,126 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
         self.assertEqual(error.exception.code, "invalid_cards_output")
 
+    def test_regenerate_answer_writes_input_and_returns_replacement_answer(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertEqual(workspace, workspace_path)
+                self.assertIn("regenerated_card.json", prompt)
+                self.assertIn('"OriginalAnswer"', prompt)
+                self.assertIn('- "Back": string', prompt)
+                self.assertIn("Output only the improved answer", prompt)
+                self.assertNotIn('- "Explanation": string', prompt)
+                self.assertEqual(
+                    json.loads((workspace / "card.json").read_text(encoding="utf-8")),
+                    {
+                        "Question": "What does retrieval practice strengthen?",
+                        "OriginalAnswer": "Memory",
+                        "OriginalExplanation": "Practice strengthens recall routes.",
+                    },
+                )
+                (workspace / "regenerated_card.json").write_text(
+                    json.dumps({"Back": "Long-term recall"}),
+                    encoding="utf-8",
+                )
+                return {"sessionId": "session-1", "stopReason": "end_turn"}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.regenerate_answer(
+                question="What does retrieval practice strengthen?",
+                answer="Memory",
+                explanation="Practice strengthens recall routes.",
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "fields": {"answer": "Long-term recall"},
+                "run": {
+                    "workspacePath": str(workspace_path),
+                    "sessionId": "session-1",
+                    "stopReason": "end_turn",
+                },
+            },
+        )
+
+    def test_regenerate_answer_and_explanation_returns_both_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn('- "Explanation": string', prompt)
+                self.assertIn("Put the direct answer only in \"Back\"", prompt)
+                (workspace / "regenerated_card.json").write_text(
+                    json.dumps(
+                        {
+                            "Back": "Long-term recall",
+                            "Explanation": (
+                                "Retrieval practice strengthens access paths, "
+                                "making the memory easier to recall later."
+                            ),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.regenerate_answer_and_explanation(
+                question="What does retrieval practice strengthen?",
+                answer="Memory",
+                explanation="Practice strengthens recall routes.",
+            )
+
+        self.assertEqual(
+            result["fields"],
+            {
+                "answer": "Long-term recall",
+                "explanation": (
+                    "Retrieval practice strengthens access paths, "
+                    "making the memory easier to recall later."
+                ),
+            },
+        )
+
+    def test_regenerate_answer_and_explanation_requires_explanation_output(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                _ = prompt
+                (workspace / "regenerated_card.json").write_text(
+                    json.dumps({"Back": "Long-term recall"}),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            with self.assertRaises(GenerationServiceError) as error:
+                service.regenerate_answer_and_explanation(
+                    question="What does retrieval practice strengthen?",
+                    answer="Memory",
+                )
+
+        self.assertEqual(error.exception.code, "invalid_regenerated_card_output")
+
     def test_generate_cards_rejects_invalid_material_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"

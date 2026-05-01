@@ -262,6 +262,46 @@ The script accepts one local file path, copies it into the same Claude Code
 `{"Front", "Back"}` card objects to `/path/to/material.pdf.json`.
 Use `--card-type answer_with_explanation` to generate `Explanation` fields too.
 
+## Card Answer Regeneration
+
+The backend also supports Claude Code workflows for improving an existing card
+from the reviewer flow. These do not create new cards and are not exposed in the
+current webview UI.
+
+Transport methods:
+
+- `anki.generation.regenerateAnswer`: returns a replacement `answer`.
+- `anki.generation.regenerateAnswerAndExplanation`: returns replacement
+  `answer` and `explanation` fields.
+
+Request params:
+
+```json
+{
+  "question": "Existing card front",
+  "answer": "Original answer",
+  "explanation": "Original explanation, if available"
+}
+```
+
+Claude Code receives this as `card.json` in the workspace root and must write
+`regenerated_card.json`. The answer-only workflow writes:
+
+```json
+{
+  "Back": "Improved direct answer"
+}
+```
+
+The answer-and-explanation workflow writes:
+
+```json
+{
+  "Back": "Improved direct answer",
+  "Explanation": "Improved concise explanation."
+}
+```
+
 ## Batch Card Insert Format
 
 Generated cards are inserted with `anki.cards.addToDeck`. The method creates one

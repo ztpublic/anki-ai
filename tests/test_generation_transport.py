@@ -68,6 +68,49 @@ class FakeGenerationService:
             "run": {"workspacePath": "/tmp/fake-run"},
         }
 
+    def regenerate_answer(
+        self,
+        *,
+        question: str,
+        answer: str,
+        explanation: str | None = None,
+    ) -> JsonObject:
+        self.calls.append(
+            {
+                "workflow": "regenerate_answer",
+                "question": question,
+                "answer": answer,
+                "explanation": explanation,
+            }
+        )
+        return {
+            "fields": {"answer": "Better answer"},
+            "run": {"workspacePath": "/tmp/fake-run"},
+        }
+
+    def regenerate_answer_and_explanation(
+        self,
+        *,
+        question: str,
+        answer: str,
+        explanation: str | None = None,
+    ) -> JsonObject:
+        self.calls.append(
+            {
+                "workflow": "regenerate_answer_and_explanation",
+                "question": question,
+                "answer": answer,
+                "explanation": explanation,
+            }
+        )
+        return {
+            "fields": {
+                "answer": "Better answer",
+                "explanation": "Better explanation.",
+            },
+            "run": {"workspacePath": "/tmp/fake-run"},
+        }
+
 
 class RateLimitedGenerationService:
     def generate_cards(
@@ -226,6 +269,84 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "claude_generation_rate_limited")
         self.assertIn("stderr", response["error"]["details"])
+
+    def test_regenerate_answer_passes_card_fields_to_service(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.regenerateAnswer",
+                {
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "Practice strengthens recall routes.",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"]["fields"]["answer"], "Better answer")
+        self.assertEqual(
+            service.calls,
+            [
+                {
+                    "workflow": "regenerate_answer",
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "Practice strengthens recall routes.",
+                }
+            ],
+        )
+
+    def test_regenerate_answer_and_explanation_passes_card_fields_to_service(
+        self,
+    ) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.regenerateAnswerAndExplanation",
+                {
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            response["result"]["fields"],
+            {
+                "answer": "Better answer",
+                "explanation": "Better explanation.",
+            },
+        )
+        self.assertEqual(service.calls[0]["explanation"], "")
+
+    def test_regenerate_answer_requires_question_and_answer(self) -> None:
+        router = TransportRouter()
+        register_generation_transport_handlers(router, FakeGenerationService())
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.regenerateAnswer",
+                {"question": "What does retrieval practice strengthen?"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
 
     def test_start_generate_cards_returns_job_and_emits_events(self) -> None:
         service = FakeGenerationService()

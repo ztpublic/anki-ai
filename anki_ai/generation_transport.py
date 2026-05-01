@@ -41,6 +41,11 @@ def register_generation_transport_handlers(
         event_emitter=event_emitter,
     )
     router.register("anki.generation.generateCards", handlers.generate_cards)
+    router.register("anki.generation.regenerateAnswer", handlers.regenerate_answer)
+    router.register(
+        "anki.generation.regenerateAnswerAndExplanation",
+        handlers.regenerate_answer_and_explanation,
+    )
     router.register("anki.generation.startGenerateCards", handlers.start_generate_cards)
     router.register("anki.generation.stopGenerateCards", handlers.stop_generate_cards)
 
@@ -75,6 +80,28 @@ class GenerationTransportHandlers:
                 materials=materials,
                 card_count=card_count,
                 card_type=card_type,
+            )
+        )
+
+    def regenerate_answer(self, params: JsonObject) -> JsonObject:
+        question, answer, explanation = self._card_regeneration_inputs(params)
+
+        return self._run(
+            lambda service: service.regenerate_answer(
+                question=question,
+                answer=answer,
+                explanation=explanation,
+            )
+        )
+
+    def regenerate_answer_and_explanation(self, params: JsonObject) -> JsonObject:
+        question, answer, explanation = self._card_regeneration_inputs(params)
+
+        return self._run(
+            lambda service: service.regenerate_answer_and_explanation(
+                question=question,
+                answer=answer,
+                explanation=explanation,
             )
         )
 
@@ -228,6 +255,16 @@ class GenerationTransportHandlers:
 
         return source_text, materials, card_count, card_type
 
+    def _card_regeneration_inputs(
+        self,
+        params: JsonObject,
+    ) -> tuple[str, str, str | None]:
+        question = _required_string(params, "question")
+        answer = _required_string(params, "answer")
+        explanation = _optional_text(params, "explanation")
+
+        return question, answer, explanation
+
     def _run(
         self,
         callback: Callable[[ClaudeCardGenerationService], Any],
@@ -283,6 +320,18 @@ def _optional_string(params: JsonObject, key: str) -> str | None:
         raise TransportError(
             "invalid_params",
             f"{key} must be a non-empty string when provided.",
+        )
+    return value
+
+
+def _optional_text(params: JsonObject, key: str) -> str | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a string when provided.",
         )
     return value
 
