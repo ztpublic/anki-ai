@@ -63,6 +63,7 @@
   - answer re-phrase
   - explanation
   - re-write explanation
+  - re-answer by LLLM
 
 - add a mode to append raw materials (don't convert to markdown for the user)
 - suppor append/drag folder/s
