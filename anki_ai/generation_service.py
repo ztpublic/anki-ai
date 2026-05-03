@@ -119,6 +119,20 @@ LOG_LEVEL_RANKS = {
 }
 MAX_GENERATION_LOG_MESSAGE_LENGTH = 4000
 MARKDOWN_MATERIAL_EXTENSIONS = frozenset({".md", ".markdown"})
+TEXT_FALLBACK_MATERIAL_EXTENSIONS = frozenset(
+    {
+        ".atom",
+        ".csv",
+        ".htm",
+        ".html",
+        ".ipynb",
+        ".json",
+        ".jsonl",
+        ".rss",
+        ".text",
+        ".txt",
+    }
+)
 ADDON_DIR = Path(__file__).resolve().parent
 ADDON_VENDOR_DIR = ADDON_DIR / "vendor"
 PROJECT_ROOT = ADDON_DIR.parent
@@ -230,10 +244,6 @@ class ClaudeCardGenerationService:
                 material_names.append(material_path.name)
                 continue
 
-            converted_name = self._unique_material_name(
-                self._converted_markdown_filename(filename),
-                used_names=used_names,
-            )
             self._log(
                 log_sink,
                 f"Converting {filename} to markdown for card generation.",
@@ -246,6 +256,23 @@ class ClaudeCardGenerationService:
                     log_sink,
                     f"Failed to convert {filename} to markdown: {error.message}",
                 )
+                fallback_name = self._write_raw_text_material_if_supported(
+                    filename=filename,
+                    content=content,
+                    materials_dir=materials_dir,
+                    used_names=used_names,
+                )
+                if fallback_name is not None:
+                    material_names.append(fallback_name)
+                    self._log(
+                        log_sink,
+                        (
+                            f"Using raw text from {filename} as {fallback_name} "
+                            "for card generation."
+                        ),
+                    )
+                    continue
+
                 raise GenerationServiceError(
                     "material_conversion_failed",
                     f"Could not convert {filename} to markdown for card generation.",
@@ -261,6 +288,10 @@ class ClaudeCardGenerationService:
                 ) from error
 
             markdown = converted["document"]["markdown"]
+            converted_name = self._unique_material_name(
+                self._converted_markdown_filename(filename),
+                used_names=used_names,
+            )
             material_path = materials_dir / converted_name
             material_path.write_text(markdown, encoding="utf-8")
             material_names.append(material_path.name)
@@ -579,6 +610,30 @@ class ClaudeCardGenerationService:
         if not stem:
             stem = "material"
         return f"{stem}.md"
+
+    @classmethod
+    def _write_raw_text_material_if_supported(
+        cls,
+        *,
+        filename: str,
+        content: bytes,
+        materials_dir: Path,
+        used_names: set[str],
+    ) -> str | None:
+        if Path(filename).suffix.lower() not in TEXT_FALLBACK_MATERIAL_EXTENSIONS:
+            return None
+
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return None
+
+        if "\x00" in text or not text.strip():
+            return None
+
+        fallback_name = cls._unique_material_name(filename, used_names=used_names)
+        (materials_dir / fallback_name).write_text(text, encoding="utf-8")
+        return fallback_name
 
     @staticmethod
     def _log(log_sink: GenerationLogSink | None, message: str) -> None:

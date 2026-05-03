@@ -335,6 +335,73 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ],
         )
 
+    def test_generate_cards_uses_raw_text_when_text_material_conversion_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FailingMaterialConverter:
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    _ = file
+                    raise FileConversionServiceError(
+                        "conversion_failed",
+                        "MarkItDown could not parse the text file.",
+                    )
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("- transcript.txt", prompt)
+                self.assertNotIn("- transcript.md", prompt)
+                self.assertEqual(
+                    (workspace / "materials" / "transcript.txt").read_text(
+                        encoding="utf-8"
+                    ),
+                    "raw transcript text\n",
+                )
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+                material_converter=FailingMaterialConverter(),
+            )
+            logs: list[GenerationLogEvent] = []
+
+            result = service.generate_cards(
+                materials=[material_payload("transcript.txt", b"raw transcript text\n")],
+                log_sink=logs.append,
+            )
+
+        self.assertEqual(
+            result["cards"],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "basic",
+                    "front": "Question",
+                    "back": "Answer",
+                }
+            ],
+        )
+        self.assertEqual(
+            log_messages(logs),
+            [
+                "Converting transcript.txt to markdown for card generation.",
+                (
+                    "Failed to convert transcript.txt to markdown: MarkItDown "
+                    "could not parse the text file."
+                ),
+                (
+                    "Using raw text from transcript.txt as transcript.txt for card "
+                    "generation."
+                ),
+            ],
+        )
+
     def test_bootstrap_generation_runtime_adds_bundled_paths(self) -> None:
         original_sys_path = list(sys.path)
         original_path = os.environ.get("PATH", "")
