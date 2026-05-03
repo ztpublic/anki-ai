@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Protocol, TypedDict
 
 from .card_types import (
-    ANSWER_WITH_EXPLANATION_CARD_TYPE_ID,
     BASIC_CARD_TYPE_ID,
     CardTypeError,
 )
@@ -149,23 +148,8 @@ class BasicQuestionAnswerGenerationWorkflow(BaseCardGenerationWorkflow):
     template_name = "basic.md.jinja"
 
 
-class AnswerWithExplanationGenerationWorkflow(BaseCardGenerationWorkflow):
-    card_type_id = ANSWER_WITH_EXPLANATION_CARD_TYPE_ID
-    template_name = "answer_with_explanation.md.jinja"
-
-    def _normalize_card(self, item: dict[Any, Any], *, index: int) -> GeneratedCard:
-        card = super()._normalize_card(item, index=index)
-        card["explanation"] = self._required_string_field(
-            item,
-            index=index,
-            names=("Explanation", "explanation"),
-        )
-        return card
-
-
 GENERATION_WORKFLOWS: dict[str, CardGenerationWorkflow] = {
     BASIC_CARD_TYPE_ID: BasicQuestionAnswerGenerationWorkflow(),
-    ANSWER_WITH_EXPLANATION_CARD_TYPE_ID: AnswerWithExplanationGenerationWorkflow(),
 }
 
 

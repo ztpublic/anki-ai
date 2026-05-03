@@ -3,24 +3,21 @@ import {
   CheckCircle2,
   Loader2,
   RefreshCw,
-  Sparkles,
   X,
 } from "lucide-react";
 
-export type RegenerationMode = "answer" | "answer_and_explanation";
+export type RegenerationMode = "answer";
 
 export type SuggestedReplacement = {
   cardId: string;
   mode: RegenerationMode;
   status: "loading" | "ready" | "error";
   answer?: string;
-  explanation?: string;
   error?: string;
 };
 
 type RegenerationSuggestionPanelProps = {
   activeSuggestion: SuggestedReplacement | null;
-  supportsExplanationRegeneration: boolean;
   isRegenerating: boolean;
   onRegenerate: (mode: RegenerationMode) => void;
   onAccept: () => void;
@@ -30,7 +27,6 @@ type RegenerationSuggestionPanelProps = {
 
 export function RegenerationSuggestionPanel({
   activeSuggestion,
-  supportsExplanationRegeneration,
   isRegenerating,
   onRegenerate,
   onAccept,
@@ -59,26 +55,6 @@ export function RegenerationSuggestionPanel({
             )}
             Regenerate answer
           </button>
-          {supportsExplanationRegeneration ? (
-            <button
-              type="button"
-              onClick={() => onRegenerate("answer_and_explanation")}
-              disabled={isRegenerating}
-              aria-busy={
-                activeSuggestion?.mode === "answer_and_explanation" &&
-                activeSuggestion.status === "loading"
-              }
-              className="flex h-8 items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400"
-            >
-              {activeSuggestion?.mode === "answer_and_explanation" &&
-              activeSuggestion.status === "loading" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Regenerate answer + explanation
-            </button>
-          ) : null}
         </div>
         {activeSuggestion?.status === "loading" ? (
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
@@ -99,11 +75,7 @@ export function RegenerationSuggestionPanel({
           {activeSuggestion.status === "loading" ? (
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-600">
               <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
-              <span>
-                {activeSuggestion.mode === "answer_and_explanation"
-                  ? "Regenerating answer and explanation..."
-                  : "Regenerating answer..."}
-              </span>
+              <span>Regenerating answer...</span>
             </div>
           ) : activeSuggestion.status === "error" ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -134,7 +106,7 @@ export function RegenerationSuggestionPanel({
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="grid gap-2 md:grid-cols-2">
+              <div className="grid gap-2">
                 <div className="min-w-0">
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
                     Suggested answer
@@ -143,16 +115,6 @@ export function RegenerationSuggestionPanel({
                     {activeSuggestion.answer}
                   </div>
                 </div>
-                {activeSuggestion.mode === "answer_and_explanation" ? (
-                  <div className="min-w-0">
-                    <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                      Suggested explanation
-                    </div>
-                    <div className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white p-2 text-sm leading-6 text-zinc-800">
-                      {activeSuggestion.explanation}
-                    </div>
-                  </div>
-                ) : null}
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 <button

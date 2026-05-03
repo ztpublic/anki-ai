@@ -65,8 +65,7 @@ def _append_reviewer_panel_mount(text: str, card: Any, kind: str) -> str:
         + "\n"
         + (
             '<div data-anki-ai-reviewer-regeneration="1" '
-            f'data-card-id="{card_id}" '
-            'data-supports-explanation="1"></div>'
+            f'data-card-id="{card_id}"></div>'
         )
     )
 
@@ -103,7 +102,7 @@ def _start_regeneration(reviewer: object, payload: dict[str, Any]) -> None:
     request_id = _payload_string(payload, "requestId")
     card_id = _payload_string(payload, "cardId")
     mode = _payload_string(payload, "mode")
-    if mode not in {"answer", "answer_and_explanation"}:
+    if mode != "answer":
         _send_reviewer_result(
             reviewer,
             {
@@ -148,18 +147,11 @@ def _start_regeneration(reviewer: object, payload: dict[str, Any]) -> None:
     def run() -> None:
         try:
             service = ClaudeCardGenerationService()
-            if mode == "answer_and_explanation":
-                result = service.regenerate_answer_and_explanation(
-                    question=card_text["question"] or "",
-                    answer=card_text["answer"] or "",
-                    explanation=card_text["explanation"],
-                )
-            else:
-                result = service.regenerate_answer(
-                    question=card_text["question"] or "",
-                    answer=card_text["answer"] or "",
-                    explanation=card_text["explanation"],
-                )
+            result = service.regenerate_answer(
+                question=card_text["question"] or "",
+                answer=card_text["answer"] or "",
+                explanation=card_text["explanation"],
+            )
             response: dict[str, Any] = {
                 "action": "regenerationResult",
                 "requestId": request_id,
@@ -280,17 +272,10 @@ def _write_regenerated_fields(
     answer_field = _answer_field_name(note)
     if answer_field is None:
         raise ValueError("Could not find an answer field on this note type.")
+    if mode != "answer":
+        raise ValueError("Unsupported regeneration mode.")
 
     explanation_field = _explanation_field_name(note)
-    if mode == "answer_and_explanation":
-        if explanation_field is not None:
-            note[answer_field] = answer
-            note[explanation_field] = explanation or ""
-            return
-
-        note[answer_field] = _combine_answer_and_explanation(answer, explanation)
-        return
-
     if explanation_field is not None:
         note[answer_field] = answer
         return

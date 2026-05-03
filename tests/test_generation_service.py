@@ -553,59 +553,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ],
         )
 
-    def test_generate_cards_supports_answer_with_explanation_card_type(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            workspace_path = Path(temp_dir) / "workspace"
-
-            def runner(prompt: str, workspace: Path) -> dict[str, str]:
-                self.assertIn(
-                    "answer-with-explanation flashcards",
-                    prompt,
-                )
-                self.assertIn(
-                    "Expand abbreviations, acronyms, and initialisms in card text",
-                    prompt,
-                )
-                self.assertIn('- "Explanation": string', prompt)
-                self.assertNotIn("basic question-and-answer flashcards", prompt)
-                (workspace / "cards.json").write_text(
-                    json.dumps(
-                        [
-                            {
-                                "Front": "Why does X happen?",
-                                "Back": "Because of Y",
-                                "Explanation": "Y changes the relevant mechanism.",
-                            }
-                        ]
-                    ),
-                    encoding="utf-8",
-                )
-                return {}
-
-            service = ClaudeCardGenerationService(
-                runner=runner,
-                workspace_factory=lambda: workspace_path,
-            )
-
-            result = service.generate_cards(
-                source_text="Important facts",
-                card_type="answer_with_explanation",
-            )
-
-        self.assertEqual(
-            result["cards"],
-            [
-                {
-                    "id": "generated-1",
-                    "cardType": "answer_with_explanation",
-                    "front": "Why does X happen?",
-                    "back": "Because of Y",
-                    "explanation": "Y changes the relevant mechanism.",
-                }
-            ],
-        )
-
-    def test_generate_cards_requires_explanation_for_explanation_card_type(
+    def test_generate_cards_rejects_removed_answer_with_explanation_card_type(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -613,10 +561,8 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
             def runner(prompt: str, workspace: Path) -> dict[str, str]:
                 _ = prompt
-                (workspace / "cards.json").write_text(
-                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
-                    encoding="utf-8",
-                )
+                _ = workspace
+                self.fail("runner should not be called for a removed card type")
                 return {}
 
             service = ClaudeCardGenerationService(
@@ -630,7 +576,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                     card_type="answer_with_explanation",
                 )
 
-        self.assertEqual(error.exception.code, "invalid_cards_output")
+        self.assertEqual(error.exception.code, "invalid_card_type")
 
     def test_regenerate_answer_writes_input_and_returns_replacement_answer(
         self,
@@ -681,76 +627,6 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 },
             },
         )
-
-    def test_regenerate_answer_and_explanation_returns_both_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            workspace_path = Path(temp_dir) / "workspace"
-
-            def runner(prompt: str, workspace: Path) -> dict[str, str]:
-                self.assertIn('- "Explanation": string', prompt)
-                self.assertIn("Put the direct answer only in \"Back\"", prompt)
-                (workspace / "regenerated_card.json").write_text(
-                    json.dumps(
-                        {
-                            "Back": "Long-term recall",
-                            "Explanation": (
-                                "Retrieval practice strengthens access paths, "
-                                "making the memory easier to recall later."
-                            ),
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                return {}
-
-            service = ClaudeCardGenerationService(
-                runner=runner,
-                workspace_factory=lambda: workspace_path,
-            )
-
-            result = service.regenerate_answer_and_explanation(
-                question="What does retrieval practice strengthen?",
-                answer="Memory",
-                explanation="Practice strengthens recall routes.",
-            )
-
-        self.assertEqual(
-            result["fields"],
-            {
-                "answer": "Long-term recall",
-                "explanation": (
-                    "Retrieval practice strengthens access paths, "
-                    "making the memory easier to recall later."
-                ),
-            },
-        )
-
-    def test_regenerate_answer_and_explanation_requires_explanation_output(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            workspace_path = Path(temp_dir) / "workspace"
-
-            def runner(prompt: str, workspace: Path) -> dict[str, str]:
-                _ = prompt
-                (workspace / "regenerated_card.json").write_text(
-                    json.dumps({"Back": "Long-term recall"}),
-                    encoding="utf-8",
-                )
-                return {}
-
-            service = ClaudeCardGenerationService(
-                runner=runner,
-                workspace_factory=lambda: workspace_path,
-            )
-
-            with self.assertRaises(GenerationServiceError) as error:
-                service.regenerate_answer_and_explanation(
-                    question="What does retrieval practice strengthen?",
-                    answer="Memory",
-                )
-
-        self.assertEqual(error.exception.code, "invalid_regenerated_card_output")
 
     def test_generate_cards_rejects_invalid_material_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

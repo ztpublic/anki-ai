@@ -85,30 +85,6 @@ class ReviewerRegenerationHelpersTest(unittest.TestCase):
             "Long-term recall\n\nExplanation:\nIt reinforces retrieval paths.",
         )
 
-    def test_write_answer_and_explanation_uses_separate_field_when_available(
-        self,
-    ) -> None:
-        note = FakeNote(
-            {
-                "Front": "What does retrieval practice strengthen?",
-                "Back": "Recall",
-                "Explanation": "Old context.",
-            }
-        )
-
-        _write_regenerated_fields(
-            note,
-            mode="answer_and_explanation",
-            answer="Long-term recall",
-            explanation="It reinforces retrieval paths.",
-        )
-
-        self.assertEqual(note.fields["Back"], "Long-term recall")
-        self.assertEqual(
-            note.fields["Explanation"],
-            "It reinforces retrieval paths.",
-        )
-
     def test_manifest_css_files_includes_imported_chunk_css(self) -> None:
         manifest = {
             "src/reviewer.tsx": {

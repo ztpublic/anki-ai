@@ -42,10 +42,6 @@ def register_generation_transport_handlers(
     )
     router.register("anki.generation.generateCards", handlers.generate_cards)
     router.register("anki.generation.regenerateAnswer", handlers.regenerate_answer)
-    router.register(
-        "anki.generation.regenerateAnswerAndExplanation",
-        handlers.regenerate_answer_and_explanation,
-    )
     router.register("anki.generation.startGenerateCards", handlers.start_generate_cards)
     router.register("anki.generation.stopGenerateCards", handlers.stop_generate_cards)
 
@@ -88,17 +84,6 @@ class GenerationTransportHandlers:
 
         return self._run(
             lambda service: service.regenerate_answer(
-                question=question,
-                answer=answer,
-                explanation=explanation,
-            )
-        )
-
-    def regenerate_answer_and_explanation(self, params: JsonObject) -> JsonObject:
-        question, answer, explanation = self._card_regeneration_inputs(params)
-
-        return self._run(
-            lambda service: service.regenerate_answer_and_explanation(
                 question=question,
                 answer=answer,
                 explanation=explanation,

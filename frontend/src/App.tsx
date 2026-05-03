@@ -44,9 +44,9 @@ type Flashcard = {
   explanation?: string;
 };
 
-type CardTypeId = "basic" | "answer_with_explanation";
+type CardTypeId = "basic";
 
-type EditableCardField = "front" | "back" | "explanation";
+type EditableCardField = "front" | "back";
 
 type CardTypeDefinition = {
   id: CardTypeId;
@@ -195,7 +195,6 @@ type SavedFlashcard = Flashcard & {
 type RegeneratedCardResponse = {
   fields: {
     answer: string;
-    explanation?: string;
   };
   run: {
     workspacePath: string;
@@ -245,21 +244,6 @@ const SUPPORTED_ATTACHMENT_SUMMARY =
 
 const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
 
-function combineAnswerAndExplanation(card: Flashcard): string {
-  const answer = card.back.trim();
-  const explanation = card.explanation?.trim() ?? "";
-
-  if (!explanation) {
-    return answer;
-  }
-
-  if (!answer) {
-    return explanation;
-  }
-
-  return `${answer}\n\nExplanation:\n${explanation}`;
-}
-
 const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
   basic: {
     id: "basic",
@@ -282,35 +266,6 @@ const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
     toAnkiFields: (card) => ({
       Front: card.front,
       Back: card.back,
-    }),
-  },
-  answer_with_explanation: {
-    id: "answer_with_explanation",
-    label: "Answer with Explanation",
-    generationLabel: "Answer + explanation",
-    fields: [
-      {
-        key: "front",
-        label: "Front (Question)",
-        placeholder: "Type the question here...",
-        tone: "front",
-      },
-      {
-        key: "back",
-        label: "Back (Answer)",
-        placeholder: "Type the answer here...",
-        tone: "back",
-      },
-      {
-        key: "explanation",
-        label: "Explanation",
-        placeholder: "Add the explanation here...",
-        tone: "back",
-      },
-    ],
-    toAnkiFields: (card) => ({
-      Front: card.front,
-      Back: combineAnswerAndExplanation(card),
     }),
   },
 };
@@ -1008,9 +963,6 @@ export function App() {
       ? suggestedReplacement
       : null;
   const isRegeneratingCard = activeSuggestion?.status === "loading";
-  const supportsExplanationRegeneration =
-    currentCardType?.fields.some((field) => field.key === "explanation") ??
-    false;
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
@@ -1399,14 +1351,9 @@ export function App() {
       status: "loading",
     });
 
-    const method =
-      mode === "answer_and_explanation"
-        ? "anki.generation.regenerateAnswerAndExplanation"
-        : "anki.generation.regenerateAnswer";
-
     try {
       const result = await window.AnkiAI.call<RegeneratedCardResponse>(
-        method,
+        "anki.generation.regenerateAnswer",
         {
           question: currentCard.front,
           answer: currentCard.back,
@@ -1424,7 +1371,6 @@ export function App() {
         mode,
         status: "ready",
         answer: result.fields.answer,
-        explanation: result.fields.explanation,
       });
     } catch (error) {
       if (requestId !== regenerationRequestIdRef.current) {
@@ -1454,14 +1400,6 @@ export function App() {
       previousCards.map((card) => {
         if (card.id !== currentCard.id) {
           return card;
-        }
-
-        if (activeSuggestion.mode === "answer_and_explanation") {
-          return {
-            ...card,
-            back: activeSuggestion.answer ?? card.back,
-            explanation: activeSuggestion.explanation ?? "",
-          };
         }
 
         return {
@@ -1774,7 +1712,6 @@ export function App() {
 
               <RegenerationSuggestionPanel
                 activeSuggestion={activeSuggestion}
-                supportsExplanationRegeneration={supportsExplanationRegeneration}
                 isRegenerating={isRegeneratingCard}
                 onRegenerate={(mode) => void handleRegenerateCard(mode)}
                 onAccept={handleAcceptSuggestion}

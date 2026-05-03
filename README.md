@@ -221,10 +221,8 @@ Claude Code output contract:
 ]
 ```
 
-`cardType` is optional and defaults to `basic`. Supported app-level card types:
-
-- `basic`: outputs `Front` and `Back`.
-- `answer_with_explanation`: outputs `Front`, `Back`, and `Explanation`.
+`cardType` is optional and defaults to `basic`. The supported app-level card
+type is `basic`, which outputs `Front` and `Back`.
 
 Generation response:
 
@@ -260,7 +258,6 @@ python scripts/generate_cards.py /path/to/material.pdf --card-count 10
 The script accepts one local file path, copies it into the same Claude Code
 `materials/` workspace used by the add-on, and writes a JSON array of
 `{"Front", "Back"}` card objects to `/path/to/material.pdf.json`.
-Use `--card-type answer_with_explanation` to generate `Explanation` fields too.
 
 ## Card Answer Regeneration
 
@@ -270,8 +267,6 @@ review flows. These do not create new cards.
 Transport methods:
 
 - `anki.generation.regenerateAnswer`: returns a replacement `answer`.
-- `anki.generation.regenerateAnswerAndExplanation`: returns replacement
-  `answer` and `explanation` fields.
 
 Request params:
 
@@ -289,15 +284,6 @@ Claude Code receives this as `card.json` in the workspace root and must write
 ```json
 {
   "Back": "Improved direct answer"
-}
-```
-
-The answer-and-explanation workflow writes:
-
-```json
-{
-  "Back": "Improved direct answer",
-  "Explanation": "Improved concise explanation."
 }
 ```
 
@@ -350,9 +336,6 @@ Rules:
 - Each entry in `cards` must include a non-empty `fields` object.
 - `fields` keys must exactly match the selected note type's field names.
 - `tags` is optional and must be a list of strings when provided.
-- For the `answer_with_explanation` app card type, the frontend still sends
-  Anki `Basic` fields: `Front` is preserved, and `Back` contains the direct
-  answer followed by the explanation text.
 
 Response:
 

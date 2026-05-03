@@ -113,55 +113,6 @@ class GenerateCardsCliTest(unittest.TestCase):
             b"# Notes\n",
         )
 
-    def test_main_writes_explanation_cards(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            material_path = Path(temp_dir) / "notes.md"
-            material_path.write_text("# Notes\n", encoding="utf-8")
-            output_path = Path(temp_dir) / "notes.md.json"
-
-            service = FakeCardGenerator()
-            service.response = {
-                "cards": [
-                    {
-                        "id": "generated-1",
-                        "cardType": "answer_with_explanation",
-                        "front": "Front",
-                        "back": "Back",
-                        "explanation": "Because the source says so.",
-                    }
-                ],
-                "run": {"workspacePath": "/tmp/fake-run"},
-            }
-            stdout = StringIO()
-            stderr = StringIO()
-
-            exit_code = main(
-                [
-                    str(material_path),
-                    "--card-type",
-                    "answer_with_explanation",
-                ],
-                service=service,
-                stdout=stdout,
-                stderr=stderr,
-            )
-            written = output_path.read_text(encoding="utf-8")
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(stderr.getvalue(), "")
-        self.assertEqual(stdout.getvalue().strip(), str(output_path))
-        self.assertEqual(
-            json.loads(written),
-            [
-                {
-                    "Front": "Front",
-                    "Back": "Back",
-                    "Explanation": "Because the source says so.",
-                }
-            ],
-        )
-        self.assertEqual(service.calls[0]["card_type"], "answer_with_explanation")
-
     def test_main_reports_generation_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             material_path = Path(temp_dir) / "input.pdf"

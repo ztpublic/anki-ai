@@ -9,14 +9,12 @@ from typing import Any, Protocol, TypedDict
 
 
 REGENERATE_ANSWER_WORKFLOW_ID = "regenerate_answer"
-REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID = "regenerate_answer_and_explanation"
 REGENERATED_CARD_OUTPUT_FILENAME = "regenerated_card.json"
 CARD_REGENERATION_INPUT_FILENAME = "card.json"
 
 
-class RegeneratedCardFields(TypedDict, total=False):
+class RegeneratedCardFields(TypedDict):
     answer: str
-    explanation: str
 
 
 class CardRegenerationWorkflowError(Exception):
@@ -55,7 +53,6 @@ class BaseCardRegenerationWorkflow:
 
     workflow_id: str
     template_name: str
-    include_explanation: bool
     output_filename = REGENERATED_CARD_OUTPUT_FILENAME
 
     def build_prompt(self) -> str:
@@ -65,7 +62,7 @@ class BaseCardRegenerationWorkflow:
                 template.render(
                     input_filename=CARD_REGENERATION_INPUT_FILENAME,
                     output_filename=self.output_filename,
-                    include_explanation=self.include_explanation,
+                    include_explanation=False,
                 )
             )
         except Exception as error:
@@ -94,11 +91,6 @@ class BaseCardRegenerationWorkflow:
                 names=("Back", "back", "Answer", "answer"),
             )
         }
-        if self.include_explanation:
-            output["explanation"] = self._required_string_field(
-                value,
-                names=("Explanation", "explanation"),
-            )
         return output
 
     @staticmethod
@@ -121,20 +113,10 @@ class BaseCardRegenerationWorkflow:
 class RegenerateAnswerWorkflow(BaseCardRegenerationWorkflow):
     workflow_id = REGENERATE_ANSWER_WORKFLOW_ID
     template_name = "regenerate_answer.md.jinja"
-    include_explanation = False
-
-
-class RegenerateAnswerAndExplanationWorkflow(BaseCardRegenerationWorkflow):
-    workflow_id = REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID
-    template_name = "regenerate_answer_and_explanation.md.jinja"
-    include_explanation = True
 
 
 REGENERATION_WORKFLOWS: dict[str, CardRegenerationWorkflow] = {
     REGENERATE_ANSWER_WORKFLOW_ID: RegenerateAnswerWorkflow(),
-    REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID: (
-        RegenerateAnswerAndExplanationWorkflow()
-    ),
 }
 
 

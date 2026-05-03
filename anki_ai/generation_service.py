@@ -22,7 +22,6 @@ from .card_generation_workflows import (
 )
 from .card_regeneration_workflows import (
     CARD_REGENERATION_INPUT_FILENAME,
-    REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID,
     REGENERATE_ANSWER_WORKFLOW_ID,
     CardRegenerationWorkflowError,
     RegeneratedCardFields,
@@ -372,22 +371,6 @@ class ClaudeCardGenerationService:
     ) -> CardRegenerationResult:
         return self._regenerate_card_fields(
             workflow_id=REGENERATE_ANSWER_WORKFLOW_ID,
-            question=question,
-            answer=answer,
-            explanation=explanation,
-            log_sink=log_sink,
-        )
-
-    def regenerate_answer_and_explanation(
-        self,
-        *,
-        question: str,
-        answer: str,
-        explanation: str | None = None,
-        log_sink: GenerationLogSink | None = None,
-    ) -> CardRegenerationResult:
-        return self._regenerate_card_fields(
-            workflow_id=REGENERATE_ANSWER_AND_EXPLANATION_WORKFLOW_ID,
             question=question,
             answer=answer,
             explanation=explanation,

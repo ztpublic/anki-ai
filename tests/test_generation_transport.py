@@ -88,29 +88,6 @@ class FakeGenerationService:
             "run": {"workspacePath": "/tmp/fake-run"},
         }
 
-    def regenerate_answer_and_explanation(
-        self,
-        *,
-        question: str,
-        answer: str,
-        explanation: str | None = None,
-    ) -> JsonObject:
-        self.calls.append(
-            {
-                "workflow": "regenerate_answer_and_explanation",
-                "question": question,
-                "answer": answer,
-                "explanation": explanation,
-            }
-        )
-        return {
-            "fields": {
-                "answer": "Better answer",
-                "explanation": "Better explanation.",
-            },
-            "run": {"workspacePath": "/tmp/fake-run"},
-        }
-
 
 class RateLimitedGenerationService:
     def generate_cards(
@@ -175,7 +152,9 @@ class GenerationTransportHandlersTest(unittest.TestCase):
             ],
         )
 
-    def test_generate_cards_accepts_card_type(self) -> None:
+    def test_generate_cards_rejects_removed_answer_with_explanation_card_type(
+        self,
+    ) -> None:
         service = FakeGenerationService()
         router = TransportRouter()
         register_generation_transport_handlers(router, service)
@@ -192,12 +171,9 @@ class GenerationTransportHandlersTest(unittest.TestCase):
 
         self.assertIsNotNone(response)
         assert response is not None
-        self.assertTrue(response["ok"])
-        self.assertEqual(
-            response["result"]["cards"][0]["cardType"],
-            "answer_with_explanation",
-        )
-        self.assertEqual(service.calls[0]["card_type"], "answer_with_explanation")
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
+        self.assertEqual(service.calls, [])
 
     def test_generate_cards_rejects_unknown_card_type(self) -> None:
         router = TransportRouter()
@@ -301,36 +277,6 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                 }
             ],
         )
-
-    def test_regenerate_answer_and_explanation_passes_card_fields_to_service(
-        self,
-    ) -> None:
-        service = FakeGenerationService()
-        router = TransportRouter()
-        register_generation_transport_handlers(router, service)
-
-        response = router.handle_raw_message(
-            request_message(
-                "anki.generation.regenerateAnswerAndExplanation",
-                {
-                    "question": "What does retrieval practice strengthen?",
-                    "answer": "Memory",
-                    "explanation": "",
-                },
-            )
-        )
-
-        self.assertIsNotNone(response)
-        assert response is not None
-        self.assertTrue(response["ok"])
-        self.assertEqual(
-            response["result"]["fields"],
-            {
-                "answer": "Better answer",
-                "explanation": "Better explanation.",
-            },
-        )
-        self.assertEqual(service.calls[0]["explanation"], "")
 
     def test_regenerate_answer_requires_question_and_answer(self) -> None:
         router = TransportRouter()

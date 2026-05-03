@@ -24,7 +24,6 @@ type ReviewerPycmdPayload =
       cardId: string;
       mode: RegenerationMode;
       answer: string;
-      explanation?: string;
     };
 
 type ReviewerResultPayload = {
@@ -34,7 +33,6 @@ type ReviewerResultPayload = {
   ok: boolean;
   fields?: {
     answer: string;
-    explanation?: string;
   };
   error?: string;
 };
@@ -76,10 +74,8 @@ function reviewerErrorMessage(value: unknown): string {
 
 function ReviewerRegenerationPanel({
   cardId,
-  supportsExplanation,
 }: {
   cardId: string;
-  supportsExplanation: boolean;
 }) {
   const [suggestion, setSuggestion] = useState<SuggestedReplacement | null>(
     null,
@@ -132,7 +128,6 @@ function ReviewerRegenerationPanel({
         mode: previousSuggestion?.mode ?? "answer",
         status: "ready",
         answer: payload.fields?.answer,
-        explanation: payload.fields?.explanation,
       }));
       activeRequestIdRef.current = null;
     };
@@ -188,7 +183,6 @@ function ReviewerRegenerationPanel({
         cardId,
         mode: activeSuggestion.mode,
         answer: activeSuggestion.answer,
-        explanation: activeSuggestion.explanation,
       });
       setSuggestion({
         ...activeSuggestion,
@@ -213,7 +207,6 @@ function ReviewerRegenerationPanel({
   return (
     <RegenerationSuggestionPanel
       activeSuggestion={activeSuggestion}
-      supportsExplanationRegeneration={supportsExplanation}
       isRegenerating={isRegenerating}
       onRegenerate={regenerate}
       onAccept={accept}
@@ -234,17 +227,11 @@ function mountAll(): void {
       return;
     }
 
-    const supportsExplanation =
-      element.dataset.supportsExplanation === "1" ||
-      element.dataset.supportsExplanation === "true";
     const root = createRoot(element);
     mountedRoots.set(element, root);
     root.render(
       <React.StrictMode>
-        <ReviewerRegenerationPanel
-          cardId={cardId}
-          supportsExplanation={supportsExplanation}
-        />
+        <ReviewerRegenerationPanel cardId={cardId} />
       </React.StrictMode>,
     );
   });
