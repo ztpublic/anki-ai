@@ -10,5 +10,12 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "../anki_ai/web"),
     emptyOutDir: true,
+    manifest: true,
+    rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, "index.html"),
+        reviewer: path.resolve(__dirname, "src/reviewer.tsx"),
+      },
+    },
   },
 });

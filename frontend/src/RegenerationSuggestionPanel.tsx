@@ -1,0 +1,181 @@
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  X,
+} from "lucide-react";
+
+export type RegenerationMode = "answer" | "answer_and_explanation";
+
+export type SuggestedReplacement = {
+  cardId: string;
+  mode: RegenerationMode;
+  status: "loading" | "ready" | "error";
+  answer?: string;
+  explanation?: string;
+  error?: string;
+};
+
+type RegenerationSuggestionPanelProps = {
+  activeSuggestion: SuggestedReplacement | null;
+  supportsExplanationRegeneration: boolean;
+  isRegenerating: boolean;
+  onRegenerate: (mode: RegenerationMode) => void;
+  onAccept: () => void;
+  onDiscard: () => void;
+  className?: string;
+};
+
+export function RegenerationSuggestionPanel({
+  activeSuggestion,
+  supportsExplanationRegeneration,
+  isRegenerating,
+  onRegenerate,
+  onAccept,
+  onDiscard,
+  className = "",
+}: RegenerationSuggestionPanelProps) {
+  return (
+    <div className={`shrink-0 border-t border-zinc-200 bg-white px-4 py-3 ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onRegenerate("answer")}
+            disabled={isRegenerating}
+            aria-busy={
+              activeSuggestion?.mode === "answer" &&
+              activeSuggestion.status === "loading"
+            }
+            className="flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+          >
+            {activeSuggestion?.mode === "answer" &&
+            activeSuggestion.status === "loading" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Regenerate answer
+          </button>
+          {supportsExplanationRegeneration ? (
+            <button
+              type="button"
+              onClick={() => onRegenerate("answer_and_explanation")}
+              disabled={isRegenerating}
+              aria-busy={
+                activeSuggestion?.mode === "answer_and_explanation" &&
+                activeSuggestion.status === "loading"
+              }
+              className="flex h-8 items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400"
+            >
+              {activeSuggestion?.mode === "answer_and_explanation" &&
+              activeSuggestion.status === "loading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Regenerate answer + explanation
+            </button>
+          ) : null}
+        </div>
+        {activeSuggestion?.status === "loading" ? (
+          <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
+            <span>Generating suggestion</span>
+          </div>
+        ) : null}
+      </div>
+
+      {activeSuggestion !== null ? (
+        <div
+          className={`mt-3 rounded-md border px-3 py-2 ${
+            activeSuggestion.status === "error"
+              ? "border-rose-200 bg-rose-50"
+              : "border-zinc-200 bg-zinc-50"
+          }`}
+        >
+          {activeSuggestion.status === "loading" ? (
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-600">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+              <span>
+                {activeSuggestion.mode === "answer_and_explanation"
+                  ? "Regenerating answer and explanation..."
+                  : "Regenerating answer..."}
+              </span>
+            </div>
+          ) : activeSuggestion.status === "error" ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-start gap-2 text-sm text-rose-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <span className="whitespace-pre-wrap break-words">
+                  {activeSuggestion.error}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onRegenerate(activeSuggestion.mode)}
+                  className="flex h-8 items-center gap-2 rounded-md border border-rose-200 bg-white px-3 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-50"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={onDiscard}
+                  className="rounded-md border border-transparent p-1.5 text-rose-600 transition-colors hover:border-rose-200 hover:bg-white"
+                  aria-label="Dismiss suggestion error"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="min-w-0">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                    Suggested answer
+                  </div>
+                  <div className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white p-2 text-sm leading-6 text-zinc-800">
+                    {activeSuggestion.answer}
+                  </div>
+                </div>
+                {activeSuggestion.mode === "answer_and_explanation" ? (
+                  <div className="min-w-0">
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                      Suggested explanation
+                    </div>
+                    <div className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white p-2 text-sm leading-6 text-zinc-800">
+                      {activeSuggestion.explanation}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onDiscard}
+                  className="flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+                >
+                  <X className="h-4 w-4" />
+                  Discard suggestion
+                </button>
+                <button
+                  type="button"
+                  onClick={onAccept}
+                  className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Accept suggestion
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}

@@ -30,6 +30,11 @@ import {
 import { motion } from "motion/react";
 
 import { BridgeTransportError } from "./bridge";
+import {
+  RegenerationSuggestionPanel,
+  type RegenerationMode,
+  type SuggestedReplacement,
+} from "./RegenerationSuggestionPanel";
 
 type Flashcard = {
   id: string;
@@ -185,6 +190,18 @@ type AddCardsResponse = {
 type SavedFlashcard = Flashcard & {
   deckId: string;
   deckName: string;
+};
+
+type RegeneratedCardResponse = {
+  fields: {
+    answer: string;
+    explanation?: string;
+  };
+  run: {
+    workspacePath: string;
+    sessionId?: string;
+    stopReason?: string;
+  };
 };
 
 const DECK_LOAD_RETRY_DELAY_MS = 250;
@@ -368,6 +385,18 @@ function generationErrorMessage(error: unknown): string {
   }
 
   return "Cards could not be generated.";
+}
+
+function regenerationErrorMessage(error: unknown): string {
+  if (error instanceof BridgeTransportError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Answer could not be regenerated.";
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -963,19 +992,33 @@ export function App() {
     AgentTraceMessage[]
   >([]);
   const [showAgentMessages, setShowAgentMessages] = useState(false);
+  const [suggestedReplacement, setSuggestedReplacement] =
+    useState<SuggestedReplacement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
   const stopGenerationRequestedRef = useRef(false);
   const generationRequestIdRef = useRef(0);
+  const regenerationRequestIdRef = useRef(0);
   const currentCard = generatedCards[currentCardIndex];
   const currentCardType = currentCard ? cardTypeDefinition(currentCard) : null;
+  const activeSuggestion =
+    currentCard && suggestedReplacement?.cardId === currentCard.id
+      ? suggestedReplacement
+      : null;
+  const isRegeneratingCard = activeSuggestion?.status === "loading";
+  const supportsExplanationRegeneration =
+    currentCardType?.fields.some((field) => field.key === "explanation") ??
+    false;
   const canGenerate = inputText.trim().length > 0 || files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
   const canSaveCards =
-    selectedDeck !== null && generatedCards.length > 0 && !isSavingCards;
+    selectedDeck !== null &&
+    generatedCards.length > 0 &&
+    !isSavingCards &&
+    !isRegeneratingCard;
 
   useEffect(() => {
     let cancelled = false;
@@ -1199,6 +1242,7 @@ export function App() {
     setShowAgentMessages(true);
     setAgentTraceMessages([]);
     setGeneratedCards([]);
+    setSuggestedReplacement(null);
     setCurrentCardIndex(0);
     activeGenerationJobIdRef.current = null;
     acceptsGenerationEventsRef.current = true;
@@ -1257,6 +1301,7 @@ export function App() {
   };
 
   const handleDiscard = () => {
+    setSuggestedReplacement(null);
     setGeneratedCards((previousCards) =>
       previousCards.filter((_, index) => index !== currentCardIndex),
     );
@@ -1310,6 +1355,7 @@ export function App() {
         }),
       );
       setGeneratedCards([]);
+      setSuggestedReplacement(null);
       setCurrentCardIndex(0);
       setSaveSuccessMessage(
         `Saved ${result.cards.length} cards to ${result.deck.name}.`,
@@ -1322,11 +1368,116 @@ export function App() {
   };
 
   const handleCardUpdate = (field: EditableCardField, value: string) => {
+    setSuggestedReplacement((previousSuggestion) => {
+      if (previousSuggestion?.cardId !== currentCard?.id) {
+        return previousSuggestion;
+      }
+
+      regenerationRequestIdRef.current += 1;
+      return null;
+    });
     setGeneratedCards((previousCards) =>
       previousCards.map((card, index) =>
         index === currentCardIndex ? { ...card, [field]: value } : card,
       ),
     );
+  };
+
+  const handleRegenerateCard = async (mode: RegenerationMode) => {
+    if (!currentCard || isRegeneratingCard) {
+      return;
+    }
+
+    const requestId = regenerationRequestIdRef.current + 1;
+    regenerationRequestIdRef.current = requestId;
+    const cardId = currentCard.id;
+    setSaveError(null);
+    setSaveSuccessMessage(null);
+    setSuggestedReplacement({
+      cardId,
+      mode,
+      status: "loading",
+    });
+
+    const method =
+      mode === "answer_and_explanation"
+        ? "anki.generation.regenerateAnswerAndExplanation"
+        : "anki.generation.regenerateAnswer";
+
+    try {
+      const result = await window.AnkiAI.call<RegeneratedCardResponse>(
+        method,
+        {
+          question: currentCard.front,
+          answer: currentCard.back,
+          explanation: currentCard.explanation ?? "",
+        },
+        { timeoutMs: 120000 },
+      );
+
+      if (requestId !== regenerationRequestIdRef.current) {
+        return;
+      }
+
+      setSuggestedReplacement({
+        cardId,
+        mode,
+        status: "ready",
+        answer: result.fields.answer,
+        explanation: result.fields.explanation,
+      });
+    } catch (error) {
+      if (requestId !== regenerationRequestIdRef.current) {
+        return;
+      }
+
+      setSuggestedReplacement({
+        cardId,
+        mode,
+        status: "error",
+        error: regenerationErrorMessage(error),
+      });
+    }
+  };
+
+  const handleAcceptSuggestion = () => {
+    if (
+      !currentCard ||
+      activeSuggestion === null ||
+      activeSuggestion.status !== "ready" ||
+      !activeSuggestion.answer
+    ) {
+      return;
+    }
+
+    setGeneratedCards((previousCards) =>
+      previousCards.map((card) => {
+        if (card.id !== currentCard.id) {
+          return card;
+        }
+
+        if (activeSuggestion.mode === "answer_and_explanation") {
+          return {
+            ...card,
+            back: activeSuggestion.answer ?? card.back,
+            explanation: activeSuggestion.explanation ?? "",
+          };
+        }
+
+        return {
+          ...card,
+          back: activeSuggestion.answer ?? card.back,
+        };
+      }),
+    );
+    setSuggestedReplacement(null);
+  };
+
+  const handleDiscardSuggestion = () => {
+    if (activeSuggestion !== null) {
+      regenerationRequestIdRef.current += 1;
+    }
+    setSuggestedReplacement(null);
   };
 
   return (
@@ -1620,6 +1771,15 @@ export function App() {
                   </div>
                 ))}
               </motion.div>
+
+              <RegenerationSuggestionPanel
+                activeSuggestion={activeSuggestion}
+                supportsExplanationRegeneration={supportsExplanationRegeneration}
+                isRegenerating={isRegeneratingCard}
+                onRegenerate={(mode) => void handleRegenerateCard(mode)}
+                onAccept={handleAcceptSuggestion}
+                onDiscard={handleDiscardSuggestion}
+              />
 
               <div className="flex h-14 shrink-0 items-center justify-between border-t border-zinc-300 bg-zinc-100 px-4">
                 <button

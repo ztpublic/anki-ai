@@ -12,8 +12,10 @@ def setup_menu() -> None:
     from aqt.utils import qconnect
 
     from .gui import open_generator_dialog
+    from .reviewer_regeneration import register_reviewer_regeneration_hooks
 
     mw.addonManager.setWebExports(__name__, r"web/.*")
+    register_reviewer_regeneration_hooks()
 
     action = QAction(MENU_ACTION_LABEL, mw)
     qconnect(action.triggered, open_generator_dialog)

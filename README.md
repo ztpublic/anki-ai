@@ -264,9 +264,8 @@ Use `--card-type answer_with_explanation` to generate `Explanation` fields too.
 
 ## Card Answer Regeneration
 
-The backend also supports Claude Code workflows for improving an existing card
-from the reviewer flow. These do not create new cards and are not exposed in the
-current webview UI.
+The backend supports Claude Code workflows for improving an existing card from
+review flows. These do not create new cards.
 
 Transport methods:
 
@@ -301,6 +300,12 @@ The answer-and-explanation workflow writes:
   "Explanation": "Improved concise explanation."
 }
 ```
+
+The generator dialog shows these as suggestion controls while reviewing newly
+generated cards. The native Anki reviewer also injects a compact inline panel on
+the answer side for notes with question/answer fields. For Anki `Basic` notes,
+`Front` is treated as the question and `Back` as the answer; if `Back` contains
+an `Explanation:` block, answer-only regeneration preserves that explanation.
 
 ## Batch Card Insert Format
 
