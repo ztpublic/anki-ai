@@ -67,5 +67,3 @@
 
 - add a mode to append raw materials (don't convert to markdown for the user)
 - suppor append/drag folder/s
-
-- re-generate card content should has a optional purpose

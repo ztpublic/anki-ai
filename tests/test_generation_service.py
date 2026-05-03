@@ -634,6 +634,42 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             },
         )
 
+    def test_regenerate_answer_uses_user_instructions_instead_of_default_goals(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertEqual(workspace, workspace_path)
+                self.assertIn("User regeneration instructions:", prompt)
+                self.assertIn("Add more explanation to the answer.", prompt)
+                self.assertIn("Use them instead of the default improvement goals", prompt)
+                self.assertNotIn("Improve the card by fixing issues such as", prompt)
+                self.assertIn("Non-negotiable constraints:", prompt)
+                (workspace / "regenerated_card.json").write_text(
+                    json.dumps({"Back": "Memory, with stronger recall paths"}),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.regenerate_answer(
+                question="What does retrieval practice strengthen?",
+                answer="Memory",
+                explanation="Practice strengthens recall routes.",
+                instructions="Add more explanation to the answer.",
+            )
+
+        self.assertEqual(
+            result["fields"],
+            {"answer": "Memory, with stronger recall paths"},
+        )
+
     def test_generate_cards_rejects_invalid_material_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"

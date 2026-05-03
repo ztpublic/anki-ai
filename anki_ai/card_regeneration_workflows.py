@@ -36,7 +36,7 @@ class CardRegenerationWorkflow(Protocol):
     workflow_id: str
     output_filename: str
 
-    def build_prompt(self) -> str:
+    def build_prompt(self, *, instructions: str | None = None) -> str:
         ...
 
     def normalize_output(self, value: Any) -> RegeneratedCardFields:
@@ -55,7 +55,7 @@ class BaseCardRegenerationWorkflow:
     template_name: str
     output_filename = REGENERATED_CARD_OUTPUT_FILENAME
 
-    def build_prompt(self) -> str:
+    def build_prompt(self, *, instructions: str | None = None) -> str:
         try:
             template = _prompt_environment().get_template(self.template_name)
             return str(
@@ -63,6 +63,11 @@ class BaseCardRegenerationWorkflow:
                     input_filename=CARD_REGENERATION_INPUT_FILENAME,
                     output_filename=self.output_filename,
                     include_explanation=False,
+                    regeneration_instructions=(
+                        instructions.strip()
+                        if instructions is not None and instructions.strip()
+                        else None
+                    ),
                 )
             )
         except Exception as error:

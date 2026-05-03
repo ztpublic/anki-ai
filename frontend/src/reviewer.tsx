@@ -17,6 +17,7 @@ type ReviewerPycmdPayload =
       requestId: string;
       cardId: string;
       mode: RegenerationMode;
+      instructions?: string;
     }
   | {
       action: "accept";
@@ -138,7 +139,7 @@ function ReviewerRegenerationPanel({
     };
   }, [cardId]);
 
-  const regenerate = (mode: RegenerationMode) => {
+  const regenerate = (mode: RegenerationMode, instructions?: string) => {
     const requestId = createRequestId();
     activeRequestIdRef.current = requestId;
     setSuggestion({
@@ -153,6 +154,7 @@ function ReviewerRegenerationPanel({
         requestId,
         cardId,
         mode,
+        ...(instructions ? { instructions } : {}),
       });
     } catch (error) {
       activeRequestIdRef.current = null;

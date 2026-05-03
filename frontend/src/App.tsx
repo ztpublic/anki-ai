@@ -1445,7 +1445,10 @@ export function App() {
     );
   };
 
-  const handleRegenerateCard = async (mode: RegenerationMode) => {
+  const handleRegenerateCard = async (
+    mode: RegenerationMode,
+    regenerationInstructions?: string,
+  ) => {
     if (!currentCard || isRegeneratingCard) {
       return;
     }
@@ -1470,6 +1473,9 @@ export function App() {
           question: currentCard.front,
           answer: currentCard.back,
           explanation: currentCard.explanation ?? "",
+          ...(regenerationInstructions
+            ? { instructions: regenerationInstructions }
+            : {}),
         },
         { timeoutMs: 10000 },
       );
@@ -1826,7 +1832,9 @@ export function App() {
               <RegenerationSuggestionPanel
                 activeSuggestion={activeSuggestion}
                 isRegenerating={isRegeneratingCard}
-                onRegenerate={(mode) => void handleRegenerateCard(mode)}
+                onRegenerate={(mode, regenerationInstructions) =>
+                  void handleRegenerateCard(mode, regenerationInstructions)
+                }
                 onAccept={handleAcceptSuggestion}
                 onDiscard={handleDiscardSuggestion}
               />

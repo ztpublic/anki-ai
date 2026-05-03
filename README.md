@@ -276,7 +276,8 @@ Request params:
 {
   "question": "Existing card front",
   "answer": "Original answer",
-  "explanation": "Original explanation, if available"
+  "explanation": "Original explanation, if available",
+  "instructions": "Optional regeneration guidance"
 }
 ```
 

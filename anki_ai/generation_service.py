@@ -369,6 +369,7 @@ class ClaudeCardGenerationService:
         question: str,
         answer: str,
         explanation: str | None = None,
+        instructions: str | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> CardRegenerationResult:
         return self._regenerate_card_fields(
@@ -376,6 +377,7 @@ class ClaudeCardGenerationService:
             question=question,
             answer=answer,
             explanation=explanation,
+            instructions=instructions,
             log_sink=log_sink,
         )
 
@@ -386,6 +388,7 @@ class ClaudeCardGenerationService:
         question: str,
         answer: str,
         explanation: str | None,
+        instructions: str | None,
         log_sink: GenerationLogSink | None,
     ) -> CardRegenerationResult:
         if not question.strip():
@@ -418,7 +421,7 @@ class ClaudeCardGenerationService:
         )
 
         try:
-            prompt = workflow.build_prompt()
+            prompt = workflow.build_prompt(instructions=instructions)
         except CardRegenerationWorkflowError as error:
             raise GenerationServiceError(error.code, error.message, error.details) from error
 

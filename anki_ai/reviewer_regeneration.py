@@ -102,6 +102,7 @@ def _start_regeneration(reviewer: object, payload: dict[str, Any]) -> None:
     request_id = _payload_string(payload, "requestId")
     card_id = _payload_string(payload, "cardId")
     mode = _payload_string(payload, "mode")
+    instructions = _payload_optional_text(payload, "instructions")
     if mode != "answer":
         _send_reviewer_result(
             reviewer,
@@ -151,6 +152,7 @@ def _start_regeneration(reviewer: object, payload: dict[str, Any]) -> None:
                 question=card_text["question"] or "",
                 answer=card_text["answer"] or "",
                 explanation=card_text["explanation"],
+                instructions=instructions,
             )
             response: dict[str, Any] = {
                 "action": "regenerationResult",
@@ -396,6 +398,13 @@ def _send_reviewer_result(reviewer: object, payload: dict[str, Any]) -> None:
 def _payload_string(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _payload_optional_text(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
 
 
 def _is_reviewer_context(context: object | None) -> bool:

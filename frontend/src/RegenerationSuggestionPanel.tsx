@@ -5,6 +5,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { useState } from "react";
 
 export type RegenerationMode = "answer";
 
@@ -19,7 +20,7 @@ export type SuggestedReplacement = {
 type RegenerationSuggestionPanelProps = {
   activeSuggestion: SuggestedReplacement | null;
   isRegenerating: boolean;
-  onRegenerate: (mode: RegenerationMode) => void;
+  onRegenerate: (mode: RegenerationMode, instructions?: string) => void;
   onAccept: () => void;
   onDiscard: () => void;
   className?: string;
@@ -33,13 +34,17 @@ export function RegenerationSuggestionPanel({
   onDiscard,
   className = "",
 }: RegenerationSuggestionPanelProps) {
+  const [instructions, setInstructions] = useState("");
+  const regenerationInstructions =
+    instructions.trim().length > 0 ? instructions.trim() : undefined;
+
   return (
     <div className={`shrink-0 border-t border-zinc-200 bg-white px-4 py-3 ${className}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => onRegenerate("answer")}
+            onClick={() => onRegenerate("answer", regenerationInstructions)}
             disabled={isRegenerating}
             aria-busy={
               activeSuggestion?.mode === "answer" &&
@@ -55,6 +60,22 @@ export function RegenerationSuggestionPanel({
             )}
             Regenerate answer
           </button>
+        </div>
+        <div className="min-w-[240px] flex-1 space-y-1">
+          <label
+            className="block text-xs font-semibold text-zinc-600"
+            htmlFor="regeneration-instructions"
+          >
+            Regeneration instructions
+          </label>
+          <textarea
+            id="regeneration-instructions"
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            placeholder="Optional, e.g. add more explanation to the answer..."
+            disabled={isRegenerating}
+            className="block h-16 w-full resize-none rounded-md border border-zinc-300 bg-white p-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-zinc-100 disabled:text-zinc-500"
+          />
         </div>
         {activeSuggestion?.status === "loading" ? (
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
@@ -88,7 +109,9 @@ export function RegenerationSuggestionPanel({
               <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => onRegenerate(activeSuggestion.mode)}
+                  onClick={() =>
+                    onRegenerate(activeSuggestion.mode, regenerationInstructions)
+                  }
                   className="flex h-8 items-center gap-2 rounded-md border border-rose-200 bg-white px-3 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-50"
                 >
                   <RefreshCw className="h-4 w-4" />

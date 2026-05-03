@@ -89,13 +89,16 @@ class GenerationTransportHandlers:
         )
 
     def regenerate_answer(self, params: JsonObject) -> JsonObject:
-        question, answer, explanation = self._card_regeneration_inputs(params)
+        question, answer, explanation, instructions = self._card_regeneration_inputs(
+            params
+        )
 
         return self._run(
             lambda service: service.regenerate_answer(
                 question=question,
                 answer=answer,
                 explanation=explanation,
+                instructions=instructions,
             )
         )
 
@@ -107,7 +110,9 @@ class GenerationTransportHandlers:
                 "Generation events are not available in this bridge context.",
             )
 
-        question, answer, explanation = self._card_regeneration_inputs(params)
+        question, answer, explanation, instructions = self._card_regeneration_inputs(
+            params
+        )
         job_id = str(uuid.uuid4())
 
         def emit_job(payload: JsonObject) -> None:
@@ -130,6 +135,7 @@ class GenerationTransportHandlers:
                 question=question,
                 answer=answer,
                 explanation=explanation,
+                instructions=instructions,
             )
 
         def on_done(outcome: GenerationJobOutcome) -> None:
@@ -312,12 +318,13 @@ class GenerationTransportHandlers:
     def _card_regeneration_inputs(
         self,
         params: JsonObject,
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, str | None]:
         question = _required_string(params, "question")
         answer = _required_string(params, "answer")
         explanation = _optional_text(params, "explanation")
+        instructions = _optional_text(params, "instructions")
 
-        return question, answer, explanation
+        return question, answer, explanation, instructions
 
     def _run(
         self,

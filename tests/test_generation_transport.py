@@ -76,6 +76,7 @@ class FakeGenerationService:
         question: str,
         answer: str,
         explanation: str | None = None,
+        instructions: str | None = None,
     ) -> JsonObject:
         self.calls.append(
             {
@@ -83,6 +84,7 @@ class FakeGenerationService:
                 "question": question,
                 "answer": answer,
                 "explanation": explanation,
+                "instructions": instructions,
             }
         )
         return {
@@ -280,8 +282,40 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "question": "What does retrieval practice strengthen?",
                     "answer": "Memory",
                     "explanation": "Practice strengthens recall routes.",
+                    "instructions": None,
                 }
             ],
+        )
+
+    def test_regenerate_answer_passes_instructions_to_service(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.regenerateAnswer",
+                {
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "Practice strengthens recall routes.",
+                    "instructions": "Add more explanation to the answer.",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            service.calls[-1],
+            {
+                "workflow": "regenerate_answer",
+                "question": "What does retrieval practice strengthen?",
+                "answer": "Memory",
+                "explanation": "Practice strengthens recall routes.",
+                "instructions": "Add more explanation to the answer.",
+            },
         )
 
     def test_regenerate_answer_requires_question_and_answer(self) -> None:
@@ -358,6 +392,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "question": "What does retrieval practice strengthen?",
                     "answer": "Memory",
                     "explanation": "Practice strengthens recall routes.",
+                    "instructions": None,
                 }
             ],
         )

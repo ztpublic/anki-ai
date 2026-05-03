@@ -33,6 +33,12 @@ Non-negotiable constraints:
 5. Output only the improved answer. Do not include an explanation field.
 {% endif %}
 
+{% if regeneration_instructions %}
+User regeneration instructions:
+{{ regeneration_instructions }}
+
+Follow these user instructions for how to regenerate the answer. Use them instead of the default improvement goals, while still obeying the non-negotiable constraints and output format above.
+{% else %}
 Improve the card by fixing issues such as:
 - vague wording
 - missing context needed to grade the answer
@@ -41,6 +47,7 @@ Improve the card by fixing issues such as:
 - ambiguity between similar concepts
 - unexplained abbreviations or initialisms
 - wording that would confuse a learner months later
+{% endif %}
 
 Before writing `{{ output_filename }}`, silently audit the replacement:
 - Does it directly answer the question?
