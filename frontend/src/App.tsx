@@ -89,6 +89,10 @@ type StartGenerateCardsResponse = {
   jobId: string;
 };
 
+type StartRegenerateAnswerResponse = {
+  jobId: string;
+};
+
 type GenerationJobError = {
   code: string;
   message: string;
@@ -104,6 +108,14 @@ type GenerationJobEvent = {
   message?: string;
   part?: LlmTracePartPayload;
   result?: GenerateCardsResponse;
+  error?: GenerationJobError;
+};
+
+type RegenerationJobEvent = {
+  jobId: string;
+  status: "started" | "succeeded" | "failed";
+  message?: string;
+  result?: RegeneratedCardResponse;
   error?: GenerationJobError;
 };
 
@@ -391,12 +403,32 @@ function isGenerationJobEvent(value: unknown): value is GenerationJobEvent {
   );
 }
 
+function isRegenerationJobEvent(value: unknown): value is RegenerationJobEvent {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.jobId === "string" &&
+    typeof value.status === "string" &&
+    ["started", "succeeded", "failed"].includes(value.status)
+  );
+}
+
 function generationErrorFromJob(error: GenerationJobError | undefined): string {
   if (error?.message) {
     return error.message;
   }
 
   return "Cards could not be generated.";
+}
+
+function regenerationErrorFromJob(error: GenerationJobError | undefined): string {
+  if (error?.message) {
+    return error.message;
+  }
+
+  return "Answer could not be regenerated.";
 }
 
 function fileExtension(fileName: string): string {
@@ -952,7 +984,9 @@ export function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
+  const activeRegenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
+  const acceptsRegenerationEventsRef = useRef(false);
   const stopGenerationRequestedRef = useRef(false);
   const generationRequestIdRef = useRef(0);
   const regenerationRequestIdRef = useRef(0);
@@ -1118,6 +1152,79 @@ export function App() {
         acceptsGenerationEventsRef.current = false;
         activeGenerationJobIdRef.current = null;
         stopGenerationRequestedRef.current = false;
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    return window.AnkiAI.on<RegenerationJobEvent>(
+      "anki.generation.regenerationJob",
+      (event) => {
+        if (!isRegenerationJobEvent(event)) {
+          return;
+        }
+
+        const activeJobId = activeRegenerationJobIdRef.current;
+        if (activeJobId !== null && event.jobId !== activeJobId) {
+          return;
+        }
+        if (activeJobId === null && !acceptsRegenerationEventsRef.current) {
+          return;
+        }
+
+        activeRegenerationJobIdRef.current = event.jobId;
+
+        if (event.status === "started") {
+          return;
+        }
+
+        acceptsRegenerationEventsRef.current = false;
+        activeRegenerationJobIdRef.current = null;
+
+        if (event.status === "succeeded") {
+          if (!event.result?.fields?.answer) {
+            setSuggestedReplacement((previousSuggestion) => {
+              if (previousSuggestion?.status !== "loading") {
+                return previousSuggestion;
+              }
+
+              return {
+                cardId: previousSuggestion.cardId,
+                mode: previousSuggestion.mode,
+                status: "error",
+                error: "Answer regeneration finished without a result payload.",
+              };
+            });
+            return;
+          }
+
+          setSuggestedReplacement((previousSuggestion) => {
+            if (previousSuggestion?.status !== "loading") {
+              return previousSuggestion;
+            }
+
+            return {
+              cardId: previousSuggestion.cardId,
+              mode: previousSuggestion.mode,
+              status: "ready",
+              answer: event.result?.fields.answer,
+            };
+          });
+          return;
+        }
+
+        setSuggestedReplacement((previousSuggestion) => {
+          if (previousSuggestion?.status !== "loading") {
+            return previousSuggestion;
+          }
+
+          return {
+            cardId: previousSuggestion.cardId,
+            mode: previousSuggestion.mode,
+            status: "error",
+            error: regenerationErrorFromJob(event.error),
+          };
+        });
       },
     );
   }, []);
@@ -1327,6 +1434,8 @@ export function App() {
       }
 
       regenerationRequestIdRef.current += 1;
+      acceptsRegenerationEventsRef.current = false;
+      activeRegenerationJobIdRef.current = null;
       return null;
     });
     setGeneratedCards((previousCards) =>
@@ -1351,33 +1460,34 @@ export function App() {
       mode,
       status: "loading",
     });
+    acceptsRegenerationEventsRef.current = true;
+    activeRegenerationJobIdRef.current = null;
 
     try {
-      const result = await window.AnkiAI.call<RegeneratedCardResponse>(
-        "anki.generation.regenerateAnswer",
+      const result = await window.AnkiAI.call<StartRegenerateAnswerResponse>(
+        "anki.generation.startRegenerateAnswer",
         {
           question: currentCard.front,
           answer: currentCard.back,
           explanation: currentCard.explanation ?? "",
         },
-        { timeoutMs: 120000 },
+        { timeoutMs: 10000 },
       );
 
       if (requestId !== regenerationRequestIdRef.current) {
+        acceptsRegenerationEventsRef.current = false;
+        activeRegenerationJobIdRef.current = null;
         return;
       }
 
-      setSuggestedReplacement({
-        cardId,
-        mode,
-        status: "ready",
-        answer: result.fields.answer,
-      });
+      activeRegenerationJobIdRef.current = result.jobId;
     } catch (error) {
       if (requestId !== regenerationRequestIdRef.current) {
         return;
       }
 
+      acceptsRegenerationEventsRef.current = false;
+      activeRegenerationJobIdRef.current = null;
       setSuggestedReplacement({
         cardId,
         mode,
@@ -1415,6 +1525,8 @@ export function App() {
   const handleDiscardSuggestion = () => {
     if (activeSuggestion !== null) {
       regenerationRequestIdRef.current += 1;
+      acceptsRegenerationEventsRef.current = false;
+      activeRegenerationJobIdRef.current = null;
     }
     setSuggestedReplacement(null);
   };

@@ -9,6 +9,7 @@ from typing import Any, Union, cast
 
 from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from .generation_service import (
+    CardRegenerationResult,
     ClaudeCardGenerationService,
     GenerationLogEvent,
     GenerationResult,
@@ -17,8 +18,9 @@ from .generation_service import (
 )
 from .transport import JsonObject, TransportError, TransportRouter
 
-GenerationJobOutcome = Union[GenerationResult, BaseException]
-GenerationJobOperation = Callable[[], GenerationResult]
+GenerationJobResult = Union[GenerationResult, CardRegenerationResult]
+GenerationJobOutcome = Union[GenerationJobResult, BaseException]
+GenerationJobOperation = Callable[[], GenerationJobResult]
 GenerationJobCallback = Callable[[GenerationJobOutcome], None]
 GenerationBackgroundRunner = Callable[
     [GenerationJobOperation, GenerationJobCallback],
@@ -43,6 +45,10 @@ def register_generation_transport_handlers(
     router.register("anki.generation.generateCards", handlers.generate_cards)
     router.register("anki.generation.regenerateAnswer", handlers.regenerate_answer)
     router.register("anki.generation.startGenerateCards", handlers.start_generate_cards)
+    router.register(
+        "anki.generation.startRegenerateAnswer",
+        handlers.start_regenerate_answer,
+    )
     router.register("anki.generation.stopGenerateCards", handlers.stop_generate_cards)
 
 
@@ -92,6 +98,59 @@ class GenerationTransportHandlers:
                 explanation=explanation,
             )
         )
+
+    def start_regenerate_answer(self, params: JsonObject) -> JsonObject:
+        event_emitter = self._event_emitter
+        if event_emitter is None:
+            raise TransportError(
+                "generation_events_unavailable",
+                "Generation events are not available in this bridge context.",
+            )
+
+        question, answer, explanation = self._card_regeneration_inputs(params)
+        job_id = str(uuid.uuid4())
+
+        def emit_job(payload: JsonObject) -> None:
+            event_emitter(
+                "anki.generation.regenerationJob",
+                {
+                    "jobId": job_id,
+                    **payload,
+                },
+            )
+
+        def operation() -> CardRegenerationResult:
+            emit_job(
+                {
+                    "status": "started",
+                    "message": "Started Claude Code answer regeneration.",
+                }
+            )
+            return self._service.regenerate_answer(
+                question=question,
+                answer=answer,
+                explanation=explanation,
+            )
+
+        def on_done(outcome: GenerationJobOutcome) -> None:
+            if isinstance(outcome, BaseException):
+                emit_job(
+                    {
+                        "status": "failed",
+                        "error": _error_payload(outcome),
+                    }
+                )
+                return
+
+            emit_job(
+                {
+                    "status": "succeeded",
+                    "result": outcome,
+                }
+            )
+
+        self._background_runner(operation, on_done)
+        return {"jobId": job_id}
 
     def start_generate_cards(self, params: JsonObject) -> JsonObject:
         event_emitter = self._event_emitter

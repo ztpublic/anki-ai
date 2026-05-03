@@ -300,6 +300,92 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "invalid_params")
 
+    def test_start_regenerate_answer_returns_job_and_emits_events(self) -> None:
+        service = FakeGenerationService()
+        events: list[tuple[str, JsonObject]] = []
+
+        def run_immediately(
+            operation: Callable[[], JsonObject],
+            on_done: Callable[[JsonObject | BaseException], None],
+        ) -> None:
+            try:
+                outcome: JsonObject | BaseException = operation()
+            except BaseException as error:
+                outcome = error
+            on_done(outcome)
+
+        router = TransportRouter()
+        register_generation_transport_handlers(
+            router,
+            service,
+            background_runner=run_immediately,
+            event_emitter=lambda event, payload: events.append((event, payload)),
+        )
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.startRegenerateAnswer",
+                {
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "Practice strengthens recall routes.",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        job_id = response["result"]["jobId"]
+        self.assertIsInstance(job_id, str)
+        self.assertEqual(
+            [payload["status"] for _, payload in events],
+            ["started", "succeeded"],
+        )
+        self.assertTrue(
+            all(event == "anki.generation.regenerationJob" for event, _ in events)
+        )
+        self.assertTrue(all(payload["jobId"] == job_id for _, payload in events))
+        self.assertEqual(
+            events[1][1]["result"]["fields"]["answer"],
+            "Better answer",
+        )
+        self.assertEqual(
+            service.calls,
+            [
+                {
+                    "workflow": "regenerate_answer",
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                    "explanation": "Practice strengthens recall routes.",
+                }
+            ],
+        )
+
+    def test_start_regenerate_answer_reports_event_unavailable_without_emitter(
+        self,
+    ) -> None:
+        router = TransportRouter()
+        register_generation_transport_handlers(router, FakeGenerationService())
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.startRegenerateAnswer",
+                {
+                    "question": "What does retrieval practice strengthen?",
+                    "answer": "Memory",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(
+            response["error"]["code"],
+            "generation_events_unavailable",
+        )
+
     def test_start_generate_cards_returns_job_and_emits_events(self) -> None:
         service = FakeGenerationService()
         events: list[tuple[str, JsonObject]] = []
