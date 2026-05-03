@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from html import escape
 from pathlib import Path
 from urllib.parse import quote
 from typing import Any, Callable
@@ -45,9 +46,42 @@ Frontend assets are missing. Run <code>make frontend-build</code>.
 """
 
     base_url = _addon_web_base_url()
-    return html.replace('src="./', f'src="{base_url}').replace(
+    html = html.replace('src="./', f'src="{base_url}').replace(
         'href="./', f'href="{base_url}'
     )
+    return _inject_theme_attrs(html)
+
+
+def _inject_theme_attrs(html: str) -> str:
+    theme = _current_anki_theme()
+    html_class = ' class="night-mode"' if theme["dark"] else ""
+    bs_theme = "dark" if theme["dark"] else "light"
+    body_class = escape(theme["bodyClass"], quote=True)
+
+    html = html.replace(
+        '<html lang="en">',
+        f'<html lang="en"{html_class} data-bs-theme="{bs_theme}">',
+        1,
+    )
+    return html.replace(
+        "<body>",
+        f'<body class="{body_class}">',
+        1,
+    )
+
+
+def _current_anki_theme() -> dict[str, Any]:
+    try:
+        from aqt.theme import theme_manager
+    except Exception:
+        return {"dark": False, "bodyClass": ""}
+
+    try:
+        body_class = theme_manager.body_class()
+    except Exception:
+        body_class = ""
+
+    return {"dark": bool(theme_manager.night_mode), "bodyClass": body_class}
 
 
 def open_generator_dialog() -> None:

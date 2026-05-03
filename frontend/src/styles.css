@@ -42,3 +42,274 @@ button {
 button:disabled {
   cursor: not-allowed;
 }
+
+:where(html.night-mode, html[data-bs-theme="dark"], html[data-anki-ai-theme="dark"]),
+:where(body.night_mode, body.nightMode, body[data-anki-ai-theme="dark"]) {
+  color-scheme: dark;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel) {
+  --anki-ai-bg: #18181b;
+  --anki-ai-bg-muted: #27272a;
+  --anki-ai-bg-subtle: #3f3f46;
+  --anki-ai-border: #52525b;
+  --anki-ai-border-soft: #3f3f46;
+  --anki-ai-text: #f4f4f5;
+  --anki-ai-text-muted: #d4d4d8;
+  --anki-ai-text-subtle: #a1a1aa;
+  --anki-ai-accent: #818cf8;
+  --anki-ai-accent-muted: #312e81;
+  --anki-ai-danger-bg: #4c0519;
+  --anki-ai-danger-border: #9f1239;
+  --anki-ai-danger-text: #fda4af;
+  --anki-ai-success-bg: #052e1a;
+  --anki-ai-success-border: #047857;
+  --anki-ai-success-text: #6ee7b7;
+
+  background-color: var(--anki-ai-bg);
+  color: var(--anki-ai-text);
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(
+    .bg-white,
+    .bg-zinc-50,
+    .bg-zinc-100,
+    .bg-zinc-200,
+    .bg-zinc-300
+  ),
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  .anki-ai-reviewer-panel.bg-white {
+  background-color: var(--anki-ai-bg) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.bg-zinc-50, .bg-zinc-100) {
+  background-color: var(--anki-ai-bg-muted) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.border-zinc-200, .border-zinc-300) {
+  border-color: var(--anki-ai-border) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(
+    .text-zinc-900,
+    .text-zinc-800,
+    .text-zinc-700,
+    .text-zinc-600
+  ) {
+  color: var(--anki-ai-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.text-zinc-500, .text-zinc-400) {
+  color: var(--anki-ai-text-subtle) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(input, select, textarea, pre) {
+  background-color: #09090b !important;
+  border-color: var(--anki-ai-border) !important;
+  color: var(--anki-ai-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(input, textarea)::placeholder {
+  color: #71717a !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  button:is(.bg-white, .hover\:bg-zinc-50:hover) {
+  background-color: var(--anki-ai-bg-muted) !important;
+  border-color: var(--anki-ai-border) !important;
+  color: var(--anki-ai-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  button:hover:not(:disabled) {
+  background-color: var(--anki-ai-bg-subtle) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  button:disabled {
+  background-color: #3f3f46 !important;
+  color: #71717a !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.text-indigo-600, .text-indigo-500) {
+  color: var(--anki-ai-accent) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.bg-indigo-50, .bg-indigo-100, .border-indigo-100) {
+  background-color: var(--anki-ai-accent-muted) !important;
+  border-color: #4338ca !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.bg-rose-50, .border-rose-200) {
+  background-color: var(--anki-ai-danger-bg) !important;
+  border-color: var(--anki-ai-danger-border) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.text-rose-700, .text-rose-600) {
+  color: var(--anki-ai-danger-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  :is(.bg-emerald-50, .border-emerald-200) {
+  background-color: var(--anki-ai-success-bg) !important;
+  border-color: var(--anki-ai-success-border) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .text-emerald-700 {
+  color: var(--anki-ai-success-text) !important;
+}
