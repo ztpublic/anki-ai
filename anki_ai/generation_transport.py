@@ -68,7 +68,9 @@ class GenerationTransportHandlers:
         self._cancelled_jobs: set[str] = set()
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
-        source_text, materials, card_count, card_type = self._generation_inputs(params)
+        source_text, materials, card_count, card_type, instructions = (
+            self._generation_inputs(params)
+        )
 
         return self._run(
             lambda service: service.generate_cards(
@@ -76,6 +78,7 @@ class GenerationTransportHandlers:
                 materials=materials,
                 card_count=card_count,
                 card_type=card_type,
+                instructions=instructions,
             )
         )
 
@@ -98,7 +101,9 @@ class GenerationTransportHandlers:
                 "Generation events are not available in this bridge context.",
             )
 
-        source_text, materials, card_count, card_type = self._generation_inputs(params)
+        source_text, materials, card_count, card_type, instructions = (
+            self._generation_inputs(params)
+        )
         job_id = str(uuid.uuid4())
 
         with self._jobs_lock:
@@ -154,6 +159,7 @@ class GenerationTransportHandlers:
                 materials=materials,
                 card_count=card_count,
                 card_type=card_type,
+                instructions=instructions,
                 log_sink=log_sink,
             )
             if is_cancelled():
@@ -220,8 +226,9 @@ class GenerationTransportHandlers:
     def _generation_inputs(
         self,
         params: JsonObject,
-    ) -> tuple[str | None, list[MaterialInput], int, str]:
+    ) -> tuple[str | None, list[MaterialInput], int, str, str | None]:
         source_text = _optional_string(params, "sourceText")
+        instructions = _optional_text(params, "instructions")
         card_count = _optional_int(
             params,
             "cardCount",
@@ -235,10 +242,13 @@ class GenerationTransportHandlers:
         if source_text is None and not materials:
             raise TransportError(
                 "invalid_params",
-                "Provide sourceText or at least one item in materials.",
+                (
+                    "Provide sourceText or at least one item in materials. "
+                    "instructions are optional generation guidance, not source material."
+                ),
             )
 
-        return source_text, materials, card_count, card_type
+        return source_text, materials, card_count, card_type, instructions
 
     def _card_regeneration_inputs(
         self,

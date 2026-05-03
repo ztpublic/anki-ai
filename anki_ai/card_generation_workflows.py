@@ -48,6 +48,7 @@ class CardGenerationWorkflow(Protocol):
         *,
         material_names: Sequence[str],
         card_count: int,
+        instructions: str | None = None,
     ) -> str:
         ...
 
@@ -71,6 +72,7 @@ class BaseCardGenerationWorkflow:
         *,
         material_names: Sequence[str],
         card_count: int,
+        instructions: str | None = None,
     ) -> str:
         try:
             template = _prompt_environment().get_template(self.template_name)
@@ -78,6 +80,11 @@ class BaseCardGenerationWorkflow:
                 template.render(
                     target_card_count=card_count,
                     material_names=list(material_names),
+                    generation_instructions=(
+                        instructions.strip()
+                        if instructions is not None and instructions.strip()
+                        else None
+                    ),
                 )
             )
         except Exception as error:

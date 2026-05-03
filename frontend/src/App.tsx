@@ -924,7 +924,7 @@ function AgentDataPartView({ part }: { part: AgentMessagePart }) {
 }
 
 export function App() {
-  const [inputText, setInputText] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [cardCount, setCardCount] = useState(5);
   const [selectedCardTypeId, setSelectedCardTypeId] =
@@ -963,7 +963,7 @@ export function App() {
       ? suggestedReplacement
       : null;
   const isRegeneratingCard = activeSuggestion?.status === "loading";
-  const canGenerate = inputText.trim().length > 0 || files.length > 0;
+  const canGenerate = files.length > 0;
   const selectedDeck =
     decks.find((deck) => deck.id === selectedDeckId) ?? null;
   const canSaveCards =
@@ -1214,7 +1214,8 @@ export function App() {
       const result = await window.AnkiAI.call<StartGenerateCardsResponse>(
         "anki.generation.startGenerateCards",
         {
-          sourceText: inputText.trim().length > 0 ? inputText : undefined,
+          instructions:
+            instructions.trim().length > 0 ? instructions.trim() : undefined,
           cardCount,
           cardType: selectedCardTypeId,
           materials,
@@ -1494,22 +1495,22 @@ export function App() {
             <div className="space-y-1.5">
               <label
                 className="block text-xs font-semibold text-zinc-600"
-                htmlFor="source-text"
+                htmlFor="generation-instructions"
               >
-                Source Text
+                Instructions
               </label>
               <textarea
-                id="source-text"
-                value={inputText}
-                onChange={(event) => setInputText(event.target.value)}
-                placeholder="Paste the text you want to convert into flashcards..."
+                id="generation-instructions"
+                value={instructions}
+                onChange={(event) => setInstructions(event.target.value)}
+                placeholder="Optional guidance, e.g. only generate yes/no questions..."
                 className="block h-32 w-full resize-none rounded-md border border-zinc-300 bg-white p-2.5 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-zinc-600">
-                Additional Files
+                Source Files
               </label>
               <button
                 type="button"
@@ -1518,7 +1519,7 @@ export function App() {
               >
                 <UploadCloud className="mb-2 h-5 w-5 text-zinc-400 transition-colors group-hover:text-indigo-500" />
                 <span className="text-sm font-medium text-zinc-700">
-                  Click to upload documents
+                  Click to upload source documents
                 </span>
                 <span className="mt-0.5 text-xs text-zinc-500">
                   {SUPPORTED_ATTACHMENT_SUMMARY}
@@ -1782,13 +1783,13 @@ export function App() {
                 Ready to generate
               </h3>
               <p className="max-w-sm text-sm text-zinc-500">
-                Provide source text or upload documents and generate a new deck
-                of Anki flashcards.
+                Upload source documents and generate a new deck of Anki
+                flashcards.
               </p>
               {!canGenerate ? (
                 <div className="mt-5 flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-500">
                   <AlertCircle className="h-4 w-4" />
-                  Waiting for source material
+                  Waiting for source files
                 </div>
               ) : null}
               {saveSuccessMessage !== null ? (

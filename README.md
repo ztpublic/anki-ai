@@ -30,7 +30,7 @@ temporary workspace that produces a `cards.json` file for the review UI.
   validates the generated `cards.json` output.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
   event helpers.
-- Presents a flashcard generator UI with source text input, optional file
+- Presents a flashcard generator UI with optional instruction input, file
   selection, target deck selection, app-level card type selection, card count,
   live generation, and card review/edit/discard controls.
 - Loads target decks from the active Anki collection through the webview bridge.
@@ -179,12 +179,14 @@ generated cards.
 ## Card Generation Format
 
 Card generation runs in a temporary workspace. The backend prepares a
-`materials/` directory, writes pasted text to `materials/user_input.txt`, copies
-markdown attachments into the same directory, converts non-markdown attachments
-to markdown files in that directory, runs Claude Code with that workspace as the
-current directory, and expects a single `cards.json` file in the workspace root.
-Pasted text is optional; if the user only attaches files, no `user_input.txt`
-file is created.
+`materials/` directory, copies markdown attachments into the same directory,
+converts non-markdown attachments to markdown files in that directory, runs
+Claude Code with that workspace as the current directory, and expects a single
+`cards.json` file in the workspace root.
+The app's instruction input is injected into the prompt as generation guidance;
+it is not written to `materials/` and is not treated as source material.
+The bridge still accepts `sourceText` for API callers; when present, it is
+written to `materials/user_input.txt`.
 Each app-level card type uses a small Jinja2 prompt template that configures a
 shared generation prompt, plus its own output normalizer.
 
@@ -197,7 +199,7 @@ Bridge request:
   "id": "req-1",
   "method": "anki.generation.generateCards",
   "params": {
-    "sourceText": "Paste your study notes here",
+    "instructions": "Only generate yes/no questions.",
     "cardCount": 5,
     "cardType": "basic",
     "materials": [

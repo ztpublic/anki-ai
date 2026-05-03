@@ -124,12 +124,17 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             },
         )
 
-    def test_generate_cards_accepts_materials_without_source_text(self) -> None:
+    def test_generate_cards_injects_instructions_without_materializing_them(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"
 
             def runner(prompt: str, workspace: Path) -> dict[str, str]:
                 self.assertIn("- notes.md", prompt)
+                self.assertIn("Additional user instructions:", prompt)
+                self.assertIn("Only generate yes/no questions.", prompt)
+                self.assertIn("not as learning material", prompt)
                 self.assertNotIn("- user_input.txt", prompt)
                 self.assertFalse(
                     (workspace / "materials" / "user_input.txt").exists()
@@ -151,6 +156,7 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
 
             result = service.generate_cards(
                 materials=[material_payload("notes.md", b"# Notes\n")],
+                instructions="Only generate yes/no questions.",
             )
 
         self.assertEqual(

@@ -174,6 +174,7 @@ class ClaudeCardGenerationService:
         materials: Sequence[MaterialInput] = (),
         card_count: int = DEFAULT_CARD_COUNT,
         card_type: str = DEFAULT_CARD_TYPE_ID,
+        instructions: str | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
         has_source_text = source_text is not None and bool(source_text.strip())
@@ -275,6 +276,7 @@ class ClaudeCardGenerationService:
             material_names=material_names,
             card_count=normalized_card_count,
             card_type_id=card_type_id,
+            instructions=instructions,
         )
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
@@ -515,11 +517,13 @@ class ClaudeCardGenerationService:
         material_names: Sequence[str],
         card_count: int,
         card_type_id: str = DEFAULT_CARD_TYPE_ID,
+        instructions: str | None = None,
     ) -> str:
         try:
             return get_generation_workflow(card_type_id).build_prompt(
                 material_names=material_names,
                 card_count=card_count,
+                instructions=instructions,
             )
         except CardGenerationWorkflowError as error:
             raise GenerationServiceError(error.code, error.message, error.details) from error

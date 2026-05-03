@@ -36,6 +36,7 @@ class FakeGenerationService:
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
         card_type: str = "basic",
+        instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         if log_sink is not None:
@@ -54,6 +55,7 @@ class FakeGenerationService:
                 "materials": [] if materials is None else materials,
                 "card_count": card_count,
                 "card_type": card_type,
+                "instructions": instructions,
             }
         )
         return {
@@ -97,12 +99,14 @@ class RateLimitedGenerationService:
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
         card_type: str = "basic",
+        instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         _ = source_text
         _ = materials
         _ = card_count
         _ = card_type
+        _ = instructions
         _ = log_sink
         raise GenerationServiceError(
             "claude_generation_rate_limited",
@@ -125,6 +129,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                 "anki.generation.generateCards",
                 {
                     "sourceText": "Important facts",
+                    "instructions": "Only generate yes/no questions.",
                     "cardCount": 7,
                     "materials": [
                         {
@@ -148,6 +153,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "materials": [{"name": "notes.md", "contentBase64": "aGVsbG8="}],
                     "card_count": 7,
                     "card_type": "basic",
+                    "instructions": "Only generate yes/no questions.",
                 }
             ],
         )

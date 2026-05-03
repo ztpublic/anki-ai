@@ -120,6 +120,14 @@ Context-free wording rules:
 - {{ rule }}
 {% endfor %}
 
+{% if generation_instructions %}
+Additional user instructions:
+{{ generation_instructions }}
+
+Treat these as instructions for selecting and shaping cards, not as learning material.
+They may override default card-style preferences, but they must not override the JSON output contract, source-grounding, accuracy, or atomicity requirements.
+
+{% endif -%}
 Importance and card-count policy:
 You are given a target number of cards.
 
