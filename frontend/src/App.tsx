@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AssistantRuntimeProvider,
   MessagePartPrimitive,
@@ -778,6 +778,25 @@ function formatToolValue(value: unknown): string {
   }
 }
 
+function isShortcutTextTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    tagName === "button" ||
+    tagName === "a"
+  );
+}
+
 function AgentTranscript() {
   return (
     <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
@@ -1360,7 +1379,7 @@ export function App() {
     }
   };
 
-  const handleDiscard = () => {
+  const handleDiscard = useCallback(() => {
     setSuggestedReplacement(null);
     setGeneratedCards((previousCards) =>
       previousCards.filter((_, index) => index !== currentCardIndex),
@@ -1368,7 +1387,56 @@ export function App() {
     setCurrentCardIndex((previousIndex) =>
       Math.max(0, Math.min(previousIndex, generatedCards.length - 2)),
     );
-  };
+  }, [currentCardIndex, generatedCards.length]);
+
+  const handleNextCard = useCallback(() => {
+    setCurrentCardIndex((previousIndex) =>
+      Math.min(generatedCards.length - 1, previousIndex + 1),
+    );
+  }, [generatedCards.length]);
+
+  useEffect(() => {
+    if (showAgentMessages || generatedCards.length === 0) {
+      return;
+    }
+
+    const handleReviewKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isShortcutTextTarget(event.target)
+      ) {
+        return;
+      }
+
+      if (event.code === "Space") {
+        if (currentCardIndex >= generatedCards.length - 1) {
+          return;
+        }
+        event.preventDefault();
+        handleNextCard();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        handleDiscard();
+      }
+    };
+
+    window.addEventListener("keydown", handleReviewKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleReviewKeyDown);
+    };
+  }, [
+    currentCardIndex,
+    generatedCards.length,
+    handleDiscard,
+    handleNextCard,
+    showAgentMessages,
+  ]);
 
   const handleFinish = async () => {
     if (selectedDeck === null || generatedCards.length === 0 || isSavingCards) {
@@ -1865,11 +1933,7 @@ export function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      setCurrentCardIndex((previousIndex) =>
-                        Math.min(generatedCards.length - 1, previousIndex + 1),
-                      )
-                    }
+                    onClick={handleNextCard}
                     disabled={currentCardIndex === generatedCards.length - 1}
                     className="rounded-md border border-zinc-300 bg-white p-1.5 text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
                     aria-label="Next card"
