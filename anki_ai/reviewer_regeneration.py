@@ -14,9 +14,11 @@ from .generation_service import ClaudeCardGenerationService, GenerationServiceEr
 
 REVIEWER_MESSAGE_PREFIX = "anki-ai-reviewer:"
 REVIEWER_ENTRY_MANIFEST_KEY = "src/reviewer.tsx"
+REVIEWER_BOTTOM_REGENERATE_COMMAND = "ankiAiRegenerate"
 EXPLANATION_SEPARATOR = "\n\nExplanation:\n"
 
 _registered = False
+_bottom_button_patched = False
 
 
 def register_reviewer_regeneration_hooks() -> None:
@@ -28,8 +30,9 @@ def register_reviewer_regeneration_hooks() -> None:
     from aqt import gui_hooks
 
     gui_hooks.webview_will_set_content.append(_inject_reviewer_assets)
-    gui_hooks.card_will_show.append(_append_reviewer_panel_mount)
+    gui_hooks.card_will_show.append(_append_reviewer_popup_mount)
     gui_hooks.webview_did_receive_js_message.append(_handle_reviewer_message)
+    _install_reviewer_bottom_button_patch()
     _registered = True
 
 
@@ -52,8 +55,8 @@ def _inject_reviewer_assets(web_content: Any, context: object | None) -> None:
     )
 
 
-def _append_reviewer_panel_mount(text: str, card: Any, kind: str) -> str:
-    if kind != "reviewAnswer" or not _can_update_card(card):
+def _append_reviewer_popup_mount(text: str, card: Any, kind: str) -> str:
+    if kind not in {"reviewQuestion", "reviewAnswer"} or not _can_update_card(card):
         return text
 
     card_id = escape(str(getattr(card, "id", "")), quote=True)
@@ -68,6 +71,90 @@ def _append_reviewer_panel_mount(text: str, card: Any, kind: str) -> str:
             f'data-card-id="{card_id}"></div>'
         )
     )
+
+
+def _install_reviewer_bottom_button_patch() -> None:
+    global _bottom_button_patched
+    if _bottom_button_patched:
+        return
+
+    try:
+        from aqt.reviewer import Reviewer
+    except Exception:
+        return
+
+    if getattr(Reviewer, "_anki_ai_regeneration_bottom_button_patched", False):
+        _bottom_button_patched = True
+        return
+
+    original_bottom_html = Reviewer._bottomHTML
+    original_link_handler = Reviewer._linkHandler
+
+    def bottom_html_with_regenerate(reviewer: Any) -> str:
+        html = original_bottom_html(reviewer)
+        card = getattr(reviewer, "card", None)
+        if card is None or not _can_update_card(card):
+            return html
+
+        marker = "</button></td>\n<td align=center valign=top id=middle>"
+        button = _reviewer_bottom_regenerate_button_html()
+        return html.replace(
+            marker,
+            f"</button>\n{button}</td>\n<td align=center valign=top id=middle>",
+            1,
+        )
+
+    def link_handler_with_regenerate(reviewer: Any, url: str) -> None:
+        if url == REVIEWER_BOTTOM_REGENERATE_COMMAND:
+            _open_reviewer_regeneration_popup(reviewer)
+            return
+        original_link_handler(reviewer, url)
+
+    Reviewer._bottomHTML = bottom_html_with_regenerate
+    Reviewer._linkHandler = link_handler_with_regenerate
+    Reviewer._anki_ai_regeneration_bottom_button_patched = True
+    _bottom_button_patched = True
+
+
+def _reviewer_bottom_regenerate_button_html() -> str:
+    return (
+        '<button title="Regenerate answer" '
+        f"onclick=\"pycmd('{REVIEWER_BOTTOM_REGENERATE_COMMAND}');\">"
+        "Regenerate"
+        "</button>"
+    )
+
+
+def _open_reviewer_regeneration_popup(reviewer: object) -> None:
+    card = getattr(reviewer, "card", None)
+    if card is None or not _can_update_card(card):
+        _show_reviewer_tooltip(
+            "This note type needs question and answer fields to regenerate."
+        )
+        return
+
+    card_id = str(getattr(card, "id", ""))
+    if not card_id:
+        _show_reviewer_tooltip("Could not identify the current card.")
+        return
+
+    web = getattr(reviewer, "web", None)
+    eval_js = getattr(web, "eval", None)
+    if callable(eval_js):
+        eval_js(
+            "window.AnkiAIReviewer && "
+            "(window.AnkiAIReviewer.mountAll(), "
+            f"window.AnkiAIReviewer.open({json.dumps(card_id)}));"
+        )
+
+
+def _show_reviewer_tooltip(message: str) -> None:
+    try:
+        from aqt.utils import tooltip
+    except Exception:
+        return
+
+    tooltip(message)
 
 
 def _handle_reviewer_message(

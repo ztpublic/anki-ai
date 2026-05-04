@@ -3,9 +3,12 @@ from __future__ import annotations
 import unittest
 
 from anki_ai.reviewer_regeneration import (
+    REVIEWER_BOTTOM_REGENERATE_COMMAND,
+    _append_reviewer_popup_mount,
     _combine_answer_and_explanation,
     _extract_card_text,
     _manifest_css_files,
+    _reviewer_bottom_regenerate_button_html,
     _split_combined_answer,
     _write_regenerated_fields,
 )
@@ -28,6 +31,7 @@ class FakeNote:
 class FakeCard:
     def __init__(self, note: FakeNote) -> None:
         self._note = note
+        self.id = 123
 
     def note(self) -> FakeNote:
         return self._note
@@ -101,6 +105,21 @@ class ReviewerRegenerationHelpersTest(unittest.TestCase):
             _manifest_css_files(manifest, manifest["src/reviewer.tsx"]),
             ["assets/styles.css"],
         )
+
+    def test_reviewer_popup_mount_is_hidden_container_for_supported_cards(self) -> None:
+        card = FakeCard(FakeNote({"Front": "Question", "Back": "Answer"}))
+
+        html = _append_reviewer_popup_mount("<main>Answer</main>", card, "reviewAnswer")
+
+        self.assertIn("<main>Answer</main>", html)
+        self.assertIn('data-anki-ai-reviewer-regeneration="1"', html)
+        self.assertIn('data-card-id="123"', html)
+
+    def test_reviewer_bottom_regenerate_button_uses_bridge_command(self) -> None:
+        html = _reviewer_bottom_regenerate_button_html()
+
+        self.assertIn("Regenerate", html)
+        self.assertIn(REVIEWER_BOTTOM_REGENERATE_COMMAND, html)
 
 
 if __name__ == "__main__":

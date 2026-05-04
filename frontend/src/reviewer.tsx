@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import {
@@ -39,6 +40,7 @@ type ReviewerResultPayload = {
 };
 
 type ReviewerPanelEvent = CustomEvent<ReviewerResultPayload>;
+type ReviewerOpenEvent = CustomEvent<{ cardId: string }>;
 
 declare global {
   function pycmd(command: string, callback?: (response: unknown) => void): false;
@@ -46,6 +48,7 @@ declare global {
   interface Window {
     AnkiAIReviewer?: {
       mountAll: () => void;
+      open: (cardId: string) => void;
       receive: (payload: ReviewerResultPayload) => void;
     };
   }
@@ -78,6 +81,8 @@ function ReviewerRegenerationPanel({
 }: {
   cardId: string;
 }) {
+  const popoverId = useId();
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [suggestion, setSuggestion] = useState<SuggestedReplacement | null>(
     null,
   );
@@ -100,6 +105,7 @@ function ReviewerRegenerationPanel({
         if (payload.ok) {
           setSuggestion(null);
           activeRequestIdRef.current = null;
+          setIsPopoverOpen(false);
           return;
         }
 
@@ -139,9 +145,24 @@ function ReviewerRegenerationPanel({
     };
   }, [cardId]);
 
+  useEffect(() => {
+    const handleOpen = (event: Event) => {
+      const payload = (event as ReviewerOpenEvent).detail;
+      if (payload.cardId === cardId) {
+        setIsPopoverOpen(true);
+      }
+    };
+
+    window.addEventListener("anki-ai-reviewer-open", handleOpen);
+    return () => {
+      window.removeEventListener("anki-ai-reviewer-open", handleOpen);
+    };
+  }, [cardId]);
+
   const regenerate = (mode: RegenerationMode, instructions?: string) => {
     const requestId = createRequestId();
     activeRequestIdRef.current = requestId;
+    setIsPopoverOpen(true);
     setSuggestion({
       cardId,
       mode,
@@ -177,6 +198,7 @@ function ReviewerRegenerationPanel({
 
     const requestId = createRequestId();
     activeRequestIdRef.current = requestId;
+    setIsPopoverOpen(true);
 
     try {
       postToReviewer({
@@ -204,17 +226,40 @@ function ReviewerRegenerationPanel({
   const discard = () => {
     activeRequestIdRef.current = null;
     setSuggestion(null);
+    setIsPopoverOpen(false);
   };
 
   return (
-    <RegenerationSuggestionPanel
-      activeSuggestion={activeSuggestion}
-      isRegenerating={isRegenerating}
-      onRegenerate={regenerate}
-      onAccept={accept}
-      onDiscard={discard}
-      className="anki-ai-reviewer-panel mt-4 rounded-md border border-zinc-200"
-    />
+    <>
+      {isPopoverOpen ? (
+        <div className="anki-ai-reviewer-panel fixed bottom-3 left-3 right-3 z-50 max-w-2xl">
+          <div className="mb-1 flex justify-end">
+            <button
+              type="button"
+              onClick={discard}
+              className="rounded-md border border-zinc-300 bg-white p-1.5 text-zinc-600 shadow-sm transition-colors hover:bg-zinc-50"
+              aria-controls={popoverId}
+              aria-label="Close regenerate popup"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div id={popoverId}>
+            <div className="sr-only" aria-live="polite">
+              Regenerate popup open
+            </div>
+            <RegenerationSuggestionPanel
+              activeSuggestion={activeSuggestion}
+              isRegenerating={isRegenerating}
+              onRegenerate={regenerate}
+              onAccept={accept}
+              onDiscard={discard}
+              className="rounded-md border border-zinc-200 shadow-sm"
+            />
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -247,8 +292,17 @@ function receive(payload: ReviewerResultPayload): void {
   );
 }
 
+function open(cardId: string): void {
+  window.dispatchEvent(
+    new CustomEvent("anki-ai-reviewer-open", {
+      detail: { cardId },
+    }),
+  );
+}
+
 window.AnkiAIReviewer = {
   mountAll,
+  open,
   receive,
 };
 
