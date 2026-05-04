@@ -28,6 +28,8 @@ import {
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
+import renderMathInElement from "katex/contrib/auto-render";
+import "katex/dist/katex.min.css";
 
 import { BridgeTransportError } from "./bridge";
 import {
@@ -44,14 +46,16 @@ type Flashcard = {
   explanation?: string;
 };
 
-type CardTypeId = "basic";
+type CardTypeId = "basic" | "markdown";
 
 type EditableCardField = "front" | "back";
+type CardContentFormat = "plain" | "markdown";
 
 type CardTypeDefinition = {
   id: CardTypeId;
   label: string;
   generationLabel: string;
+  contentFormat: CardContentFormat;
   fields: {
     key: EditableCardField;
     label: string;
@@ -176,6 +180,10 @@ type InsertCardPayload = {
   tags?: string[];
 };
 
+type RenderMarkdownResponse = {
+  html: string;
+};
+
 type InsertedCard = {
   id: string;
   noteId: string;
@@ -202,6 +210,13 @@ type AddCardsResponse = {
 type SavedFlashcard = Flashcard & {
   deckId: string;
   deckName: string;
+};
+
+type MarkdownPreviewState = {
+  cardId: string;
+  htmlByField: Partial<Record<EditableCardField, string>>;
+  isLoading: boolean;
+  error: string | null;
 };
 
 type RegeneratedCardResponse = {
@@ -261,6 +276,7 @@ const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
     id: "basic",
     label: "Question and Answer",
     generationLabel: "Q&A",
+    contentFormat: "plain",
     fields: [
       {
         key: "front",
@@ -272,6 +288,30 @@ const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
         key: "back",
         label: "Back (Answer)",
         placeholder: "Type the answer here...",
+        tone: "back",
+      },
+    ],
+    toAnkiFields: (card) => ({
+      Front: card.front,
+      Back: card.back,
+    }),
+  },
+  markdown: {
+    id: "markdown",
+    label: "Markdown",
+    generationLabel: "Markdown",
+    contentFormat: "markdown",
+    fields: [
+      {
+        key: "front",
+        label: "Front (Markdown)",
+        placeholder: "Type the Markdown question here...",
+        tone: "front",
+      },
+      {
+        key: "back",
+        label: "Back (Markdown)",
+        placeholder: "Type the Markdown answer here...",
         tone: "back",
       },
     ],
@@ -336,6 +376,31 @@ function saveErrorMessage(error: unknown): string {
   }
 
   return "Cards could not be saved.";
+}
+
+async function renderMarkdownToHtml(markdown: string): Promise<string> {
+  const result = await window.AnkiAI.call<RenderMarkdownResponse>(
+    "anki.cards.renderMarkdown",
+    { markdown },
+    { timeoutMs: 5000 },
+  );
+  return result.html;
+}
+
+async function ankiFieldsForCard(card: Flashcard): Promise<Record<string, string>> {
+  const definition = cardTypeDefinition(card);
+  const fields = definition.toAnkiFields(card);
+  if (definition.contentFormat !== "markdown") {
+    return fields;
+  }
+
+  const renderedEntries = await Promise.all(
+    Object.entries(fields).map(async ([fieldName, markdown]) => [
+      fieldName,
+      await renderMarkdownToHtml(markdown),
+    ]),
+  );
+  return Object.fromEntries(renderedEntries);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -974,6 +1039,27 @@ function AgentDataPartView({ part }: { part: AgentMessagePart }) {
   );
 }
 
+function MarkdownPreview({ html }: { html: string }) {
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = previewRef.current;
+    if (element === null) {
+      return;
+    }
+
+    renderMathInElement(element, {
+      delimiters: [
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false },
+      ],
+      throwOnError: false,
+    });
+  }, [html]);
+
+  return <div ref={previewRef} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 export function App() {
   const [instructions, setInstructions] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -1000,6 +1086,8 @@ export function App() {
   const [showAgentMessages, setShowAgentMessages] = useState(false);
   const [suggestedReplacement, setSuggestedReplacement] =
     useState<SuggestedReplacement | null>(null);
+  const [markdownPreview, setMarkdownPreview] =
+    useState<MarkdownPreviewState | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
@@ -1011,6 +1099,10 @@ export function App() {
   const regenerationRequestIdRef = useRef(0);
   const currentCard = generatedCards[currentCardIndex];
   const currentCardType = currentCard ? cardTypeDefinition(currentCard) : null;
+  const currentMarkdownPreview =
+    currentCard && markdownPreview?.cardId === currentCard.id
+      ? markdownPreview
+      : null;
   const activeSuggestion =
     currentCard && suggestedReplacement?.cardId === currentCard.id
       ? suggestedReplacement
@@ -1024,6 +1116,72 @@ export function App() {
     generatedCards.length > 0 &&
     !isSavingCards &&
     !isRegeneratingCard;
+
+  useEffect(() => {
+    if (!currentCard || currentCardType?.contentFormat !== "markdown") {
+      setMarkdownPreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    const cardId = currentCard.id;
+    const front = currentCard.front;
+    const back = currentCard.back;
+
+    setMarkdownPreview({
+      cardId,
+      htmlByField: {},
+      isLoading: true,
+      error: null,
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      const renderPreview = async () => {
+        try {
+          const [frontHtml, backHtml] = await Promise.all([
+            renderMarkdownToHtml(front),
+            renderMarkdownToHtml(back),
+          ]);
+          if (cancelled) {
+            return;
+          }
+
+          setMarkdownPreview({
+            cardId,
+            htmlByField: {
+              front: frontHtml,
+              back: backHtml,
+            },
+            isLoading: false,
+            error: null,
+          });
+        } catch (error) {
+          if (cancelled) {
+            return;
+          }
+
+          setMarkdownPreview({
+            cardId,
+            htmlByField: {},
+            isLoading: false,
+            error: saveErrorMessage(error),
+          });
+        }
+      };
+
+      void renderPreview();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    currentCard?.back,
+    currentCard?.front,
+    currentCard?.id,
+    currentCardType?.contentFormat,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1448,23 +1606,26 @@ export function App() {
     setSaveSuccessMessage(null);
 
     try {
+      const cardPayloads = await Promise.all(
+        generatedCards.map<Promise<InsertCardPayload>>(async (card) => ({
+          fields: await ankiFieldsForCard(card),
+        })),
+      );
       const result = await window.AnkiAI.call<AddCardsResponse>(
         "anki.cards.addToDeck",
         {
           deckId: selectedDeck.id,
           noteTypeName: "Basic",
-          cards: generatedCards.map<InsertCardPayload>((card) => ({
-            fields: cardTypeDefinition(card).toAnkiFields(card),
-          })),
+          cards: cardPayloads,
         },
         { timeoutMs: 15000 },
       );
 
-      const savedCards = result.cards.map((card) => ({
+      const savedCards = result.cards.map((card, index) => ({
         id: card.id,
-        cardType: DEFAULT_CARD_TYPE_ID,
-        front: card.fields.Front ?? card.question,
-        back: card.fields.Back ?? card.answer,
+        cardType: generatedCards[index]?.cardType ?? DEFAULT_CARD_TYPE_ID,
+        front: generatedCards[index]?.front ?? card.fields.Front ?? card.question,
+        back: generatedCards[index]?.back ?? card.fields.Back ?? card.answer,
         deckId: result.deck.id,
         deckName: result.deck.name,
       }));
@@ -1880,19 +2041,50 @@ export function App() {
                     >
                       {field.label}
                     </label>
-                    <textarea
-                      id={`card-${field.key}`}
-                      value={currentCard[field.key] ?? ""}
-                      onChange={(event) =>
-                        handleCardUpdate(field.key, event.target.value)
-                      }
+                    <div
                       className={
-                        field.tone === "front"
-                          ? "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-indigo-50/20"
-                          : "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-white"
+                        currentCardType.contentFormat === "markdown"
+                          ? "grid min-h-0 flex-1 gap-3 md:grid-cols-2"
+                          : "flex min-h-0 flex-1"
                       }
-                      placeholder={field.placeholder}
-                    />
+                    >
+                      <textarea
+                        id={`card-${field.key}`}
+                        value={currentCard[field.key] ?? ""}
+                        onChange={(event) =>
+                          handleCardUpdate(field.key, event.target.value)
+                        }
+                        className={
+                          field.tone === "front"
+                            ? "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-indigo-50/20"
+                            : "min-h-0 w-full flex-1 resize-none rounded-md border border-transparent bg-transparent p-2 text-base text-zinc-800 outline-none placeholder:text-zinc-300 focus:border-indigo-200 focus:bg-white"
+                        }
+                        placeholder={field.placeholder}
+                      />
+                      {currentCardType.contentFormat === "markdown" ? (
+                        <div className="anki-ai-markdown-preview min-h-0 overflow-auto rounded-md border border-zinc-200 bg-white p-3 text-base leading-7 text-zinc-800">
+                          {currentMarkdownPreview?.isLoading ? (
+                            <span className="text-sm text-zinc-500">
+                              Rendering preview...
+                            </span>
+                          ) : currentMarkdownPreview?.error ? (
+                            <span className="text-sm text-rose-600">
+                              {currentMarkdownPreview.error}
+                            </span>
+                          ) : currentMarkdownPreview?.htmlByField[field.key] ? (
+                            <MarkdownPreview
+                              html={
+                                currentMarkdownPreview.htmlByField[field.key] ?? ""
+                              }
+                            />
+                          ) : (
+                            <span className="text-sm text-zinc-400">
+                              Empty preview
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </motion.div>

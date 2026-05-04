@@ -163,6 +163,7 @@ anki.decks.ensure
 anki.decks.rename
 anki.cards.search
 anki.cards.get
+anki.cards.renderMarkdown
 anki.files.convertToMarkdown
 anki.generation.generateCards
 anki.generation.startGenerateCards
@@ -223,8 +224,10 @@ Claude Code output contract:
 ]
 ```
 
-`cardType` is optional and defaults to `basic`. The supported app-level card
-type is `basic`, which outputs `Front` and `Back`.
+`cardType` is optional and defaults to `basic`. Supported app-level card types
+are `basic`, which treats `Front` and `Back` as plain text, and `markdown`,
+which lets the LLM write Markdown that is converted to sanitized HTML with
+Anki-compatible MathJax delimiters before saving.
 
 Generation response:
 

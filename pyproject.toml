@@ -12,6 +12,9 @@ dependencies = [
   "claude-agent-sdk",
   "jinja2",
   "markitdown[all]",
+  "markdown-it-py",
+  "mdit-py-plugins",
+  "nh3",
 ]
 
 [project.optional-dependencies]

@@ -113,6 +113,26 @@ class GenerateCardsCliTest(unittest.TestCase):
             b"# Notes\n",
         )
 
+    def test_main_accepts_markdown_card_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            material_path = Path(temp_dir) / "notes.md"
+            material_path.write_text("# Notes\n", encoding="utf-8")
+
+            service = FakeCardGenerator()
+            stdout = StringIO()
+            stderr = StringIO()
+
+            exit_code = main(
+                [str(material_path), "--card-type", "markdown"],
+                service=service,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(service.calls[0]["card_type"], "markdown")
+
     def test_main_reports_generation_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             material_path = Path(temp_dir) / "input.pdf"

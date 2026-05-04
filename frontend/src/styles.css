@@ -43,6 +43,95 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.anki-ai-markdown-preview p {
+  margin: 0 0 0.5rem;
+}
+
+.anki-ai-markdown-preview p:last-child {
+  margin-bottom: 0;
+}
+
+.anki-ai-markdown-preview h1,
+.anki-ai-markdown-preview h2,
+.anki-ai-markdown-preview h3,
+.anki-ai-markdown-preview h4,
+.anki-ai-markdown-preview h5,
+.anki-ai-markdown-preview h6 {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.anki-ai-markdown-preview h1 {
+  font-size: 1.125rem;
+}
+
+.anki-ai-markdown-preview h2,
+.anki-ai-markdown-preview h3,
+.anki-ai-markdown-preview h4,
+.anki-ai-markdown-preview h5,
+.anki-ai-markdown-preview h6 {
+  font-size: 1rem;
+}
+
+.anki-ai-markdown-preview ul,
+.anki-ai-markdown-preview ol {
+  margin: 0 0 0.5rem 1.25rem;
+  padding: 0;
+}
+
+.anki-ai-markdown-preview ul {
+  list-style: disc;
+}
+
+.anki-ai-markdown-preview ol {
+  list-style: decimal;
+}
+
+.anki-ai-markdown-preview blockquote {
+  margin: 0 0 0.5rem;
+  border-left: 2px solid #d4d4d8;
+  padding-left: 0.75rem;
+  color: #52525b;
+}
+
+.anki-ai-markdown-preview code {
+  border-radius: 0.25rem;
+  background-color: #f4f4f5;
+  padding: 0.08rem 0.25rem;
+  color: #18181b;
+}
+
+.anki-ai-markdown-preview pre {
+  margin: 0 0 0.5rem;
+  overflow: auto;
+  border-radius: 0.375rem;
+  background-color: #f4f4f5;
+  padding: 0.5rem;
+}
+
+.anki-ai-markdown-preview pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.anki-ai-markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.5rem;
+}
+
+.anki-ai-markdown-preview th,
+.anki-ai-markdown-preview td {
+  border: 1px solid #e4e4e7;
+  padding: 0.375rem;
+}
+
+.anki-ai-markdown-preview a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+
 :where(html.night-mode, html[data-bs-theme="dark"], html[data-anki-ai-theme="dark"]),
 :where(body.night_mode, body.nightMode, body[data-anki-ai-theme="dark"]) {
   color-scheme: dark;
@@ -258,6 +347,100 @@ button:disabled {
   :is(.bg-indigo-50, .bg-indigo-100, .border-indigo-100) {
   background-color: var(--anki-ai-accent-muted) !important;
   border-color: #4338ca !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview {
+  background-color: #09090b !important;
+  color: var(--anki-ai-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview blockquote {
+  border-left-color: var(--anki-ai-border);
+  color: var(--anki-ai-text-muted);
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview code {
+  background-color: var(--anki-ai-bg-muted) !important;
+  color: var(--anki-ai-text) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview pre {
+  background-color: var(--anki-ai-bg-muted) !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview pre code {
+  background-color: transparent !important;
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview :where(th, td) {
+  border-color: var(--anki-ai-border);
+}
+
+:where(
+    html.night-mode,
+    html[data-bs-theme="dark"],
+    html[data-anki-ai-theme="dark"],
+    body.night_mode,
+    body.nightMode,
+    body[data-anki-ai-theme="dark"]
+  )
+  :where(#anki-ai-root, .anki-ai-reviewer-panel)
+  .anki-ai-markdown-preview a {
+  color: var(--anki-ai-accent);
 }
 
 :where(

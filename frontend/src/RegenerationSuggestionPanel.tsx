@@ -52,12 +52,7 @@ export function RegenerationSuggestionPanel({
             }
             className="flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
           >
-            {activeSuggestion?.mode === "answer" &&
-            activeSuggestion.status === "loading" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
+            <RefreshCw className="h-4 w-4" />
             Regenerate answer
           </button>
         </div>
@@ -78,12 +73,6 @@ export function RegenerationSuggestionPanel({
             className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-zinc-100 disabled:text-zinc-500"
           />
         </div>
-        {activeSuggestion?.status === "loading" ? (
-          <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
-            <span>Generating suggestion</span>
-          </div>
-        ) : null}
       </div>
 
       {activeSuggestion !== null ? (

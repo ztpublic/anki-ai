@@ -1,0 +1,18 @@
+{% set card_type_label = "Markdown question-and-answer" %}
+{% set has_explanation = false %}
+{% set uses_markdown = true %}
+{% set extra_rejection_rules = [
+  "cards with long, rambling answers",
+  "cards whose \"Back\" contains multiple sentences, semicolon-separated mini-essays, or several independent clauses",
+] %}
+{% set answer_rules_heading = "Answer-length and Markdown rules" %}
+{% set answer_rules = [
+  "Prefer a phrase, one compact sentence, or one compact equation.",
+  "The \"Back\" should usually be shorter than the \"Front\".",
+  "If an answer needs \"and\", \"because\", commas, or parentheses, check whether it should be split into multiple cards.",
+  "Do not include background explanation in the \"Back\"; create another card for the explanation if it matters.",
+  "Use Markdown only when it makes the card clearer than plain text.",
+  "Use TeX math when the answer or prompt is naturally mathematical.",
+  "Do not include source citations in the card text.",
+] %}
+{% include "_card_generation_prompt.md.jinja" %}

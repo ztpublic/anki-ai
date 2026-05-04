@@ -11,6 +11,7 @@ from typing import Any, Protocol, TypedDict
 from .card_types import (
     BASIC_CARD_TYPE_ID,
     CardTypeError,
+    MARKDOWN_CARD_TYPE_ID,
 )
 
 
@@ -155,8 +156,14 @@ class BasicQuestionAnswerGenerationWorkflow(BaseCardGenerationWorkflow):
     template_name = "basic.md.jinja"
 
 
+class MarkdownQuestionAnswerGenerationWorkflow(BaseCardGenerationWorkflow):
+    card_type_id = MARKDOWN_CARD_TYPE_ID
+    template_name = "markdown.md.jinja"
+
+
 GENERATION_WORKFLOWS: dict[str, CardGenerationWorkflow] = {
     BASIC_CARD_TYPE_ID: BasicQuestionAnswerGenerationWorkflow(),
+    MARKDOWN_CARD_TYPE_ID: MarkdownQuestionAnswerGenerationWorkflow(),
 }
 
 

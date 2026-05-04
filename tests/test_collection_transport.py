@@ -127,6 +127,24 @@ class CollectionTransportHandlersTest(unittest.TestCase):
         self.assertEqual(response["result"]["cards"][0]["question"], "Question 1")
         self.assertEqual(response["result"]["cards"][0]["tags"], ["ai", "reviewed"])
 
+    def test_render_markdown_returns_sanitized_html_without_collection(self) -> None:
+        router = TransportRouter()
+        register_collection_transport_handlers(router, lambda: None)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.cards.renderMarkdown",
+                {"markdown": "**Bold** $x^2$ <script>alert(1)</script>"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertIn("<strong>Bold</strong>", response["result"]["html"])
+        self.assertIn("\\(x^2\\)", response["result"]["html"])
+        self.assertNotIn("<script", response["result"]["html"])
+
     def test_update_note_fields_returns_domain_error(self) -> None:
         collection = FakeCollection()
         router = TransportRouter()

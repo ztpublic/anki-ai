@@ -162,6 +162,12 @@ Formatting rules:
 - "Back" should usually be 1 short phrase, definition, equation, or compact sentence.
 {% if has_explanation -%}
 - "Explanation" should usually be 1-3 concise sentences.
+{% elif uses_markdown|default(false) -%}
+- You may use Markdown in "Front" and "Back" when it improves readability.
+- Use Markdown sparingly: emphasis, lists, inline code, code blocks, links, tables, and math are allowed only when useful.
+- For math, use ordinary Markdown-style TeX delimiters when natural: `$...$` for inline math and `$$...$$` for display math.
+- Do not include HTML unless it is necessary for a card that Markdown cannot express clearly.
+- Keep "Back" as short as possible while remaining correct.
 {% else -%}
 - Keep "Back" as short as possible while remaining correct.
 - Use plain text only.

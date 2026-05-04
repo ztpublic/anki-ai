@@ -8,10 +8,12 @@ class CardTypeError(ValueError):
 
 
 BASIC_CARD_TYPE_ID = "basic"
+MARKDOWN_CARD_TYPE_ID = "markdown"
 DEFAULT_CARD_TYPE_ID = BASIC_CARD_TYPE_ID
 
 CARD_TYPE_IDS = (
     BASIC_CARD_TYPE_ID,
+    MARKDOWN_CARD_TYPE_ID,
 )
 
 

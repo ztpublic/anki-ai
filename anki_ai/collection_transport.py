@@ -10,6 +10,7 @@ from .collection_services import (
     CollectionServiceError,
     NewCardInput,
 )
+from .markdown_renderer import MarkdownRenderError, render_markdown_to_anki_html
 from .transport import JsonObject, TransportError, TransportRouter
 
 CollectionProvider = Callable[[], Optional[Any]]
@@ -29,6 +30,7 @@ def register_collection_transport_handlers(
     router.register("anki.decks.rename", handlers.rename_deck)
     router.register("anki.cards.search", handlers.search_cards)
     router.register("anki.cards.get", handlers.get_card)
+    router.register("anki.cards.renderMarkdown", handlers.render_markdown)
     router.register("anki.cards.addToDeck", handlers.add_cards_to_deck)
     router.register("anki.cards.updateNoteFields", handlers.update_note_fields)
     router.register("anki.cards.moveToDeck", handlers.move_cards_to_deck)
@@ -100,6 +102,13 @@ class CollectionTransportHandlers:
     def get_card(self, params: JsonObject) -> JsonObject:
         card_id = _required_id(params, "cardId")
         return self._run(lambda service: {"card": service.get_card(card_id)})
+
+    def render_markdown(self, params: JsonObject) -> JsonObject:
+        markdown = _required_text(params, "markdown")
+        try:
+            return {"html": render_markdown_to_anki_html(markdown)}
+        except MarkdownRenderError as error:
+            raise TransportError(error.code, error.message, error.details) from error
 
     def add_cards_to_deck(self, params: JsonObject) -> JsonObject:
         cards = _required_card_inputs(params, "cards")
@@ -183,6 +192,16 @@ def _required_string(params: JsonObject, key: str) -> str:
             f"{key} must be a non-empty string.",
         )
     return value.strip()
+
+
+def _required_text(params: JsonObject, key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str):
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a string.",
+        )
+    return value
 
 
 def _optional_string(params: JsonObject, key: str) -> str | None:

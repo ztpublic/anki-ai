@@ -171,6 +171,51 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ],
         )
 
+    def test_generate_cards_supports_markdown_card_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("Markdown question-and-answer", prompt)
+                self.assertIn("You may use Markdown", prompt)
+                self.assertIn("$...$", prompt)
+                self.assertIn("$$...$$", prompt)
+                self.assertNotIn("Use plain text only.", prompt)
+                (workspace / "cards.json").write_text(
+                    json.dumps(
+                        [
+                            {
+                                "Front": "**Derivative** of $x^2$?",
+                                "Back": "$2x$",
+                            }
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.generate_cards(
+                source_text="Important facts",
+                card_type="markdown",
+            )
+
+        self.assertEqual(
+            result["cards"],
+            [
+                {
+                    "id": "generated-1",
+                    "cardType": "markdown",
+                    "front": "**Derivative** of $x^2$?",
+                    "back": "$2x$",
+                }
+            ],
+        )
+
     def test_generate_cards_converts_non_markdown_material_to_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"
