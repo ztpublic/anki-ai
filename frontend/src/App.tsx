@@ -274,7 +274,7 @@ const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
 const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
   basic: {
     id: "basic",
-    label: "Question and Answer",
+    label: "Basic",
     generationLabel: "Q&A",
     contentFormat: "plain",
     fields: [
