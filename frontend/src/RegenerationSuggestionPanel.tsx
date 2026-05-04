@@ -40,7 +40,7 @@ export function RegenerationSuggestionPanel({
 
   return (
     <div className={`shrink-0 border-t border-zinc-200 bg-white px-4 py-3 ${className}`}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <button
             type="button"
@@ -61,20 +61,21 @@ export function RegenerationSuggestionPanel({
             Regenerate answer
           </button>
         </div>
-        <div className="min-w-[240px] flex-1 space-y-1">
+        <div className="min-w-[240px] flex-1">
           <label
-            className="block text-xs font-semibold text-zinc-600"
+            className="sr-only"
             htmlFor="regeneration-instructions"
           >
             Regeneration instructions
           </label>
-          <textarea
+          <input
             id="regeneration-instructions"
+            type="text"
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
-            placeholder="Optional, e.g. add more explanation to the answer..."
+            placeholder="Optional instructions, e.g. add more explanation..."
             disabled={isRegenerating}
-            className="block h-16 w-full resize-none rounded-md border border-zinc-300 bg-white p-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-zinc-100 disabled:text-zinc-500"
+            className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-zinc-100 disabled:text-zinc-500"
           />
         </div>
         {activeSuggestion?.status === "loading" ? (
