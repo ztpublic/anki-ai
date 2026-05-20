@@ -13,9 +13,10 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict, cast
 
 from .card_generation_workflows import (
+    CardCountMode,
     CardGenerationWorkflowError,
     GeneratedCard,
     get_generation_workflow,
@@ -165,6 +166,7 @@ class ClaudeCardGenerationService:
 
     DEFAULT_CARD_COUNT = 5
     MAX_CARD_COUNT = 200
+    CARD_COUNT_MODES = frozenset({"less", "normal", "more"})
 
     def __init__(
         self,
@@ -187,6 +189,7 @@ class ClaudeCardGenerationService:
         source_text: str | None = None,
         materials: Sequence[MaterialInput] = (),
         card_count: int = DEFAULT_CARD_COUNT,
+        card_count_mode: CardCountMode | None = None,
         card_type: str = DEFAULT_CARD_TYPE_ID,
         instructions: str | None = None,
         log_sink: GenerationLogSink | None = None,
@@ -209,6 +212,7 @@ class ClaudeCardGenerationService:
             ) from error
 
         normalized_card_count = max(1, min(card_count, self.MAX_CARD_COUNT))
+        normalized_card_count_mode = self._normalize_card_count_mode(card_count_mode)
         workspace_path = self._workspace_factory()
         workspace_path.mkdir(parents=True, exist_ok=True)
         materials_dir = workspace_path / "materials"
@@ -306,6 +310,7 @@ class ClaudeCardGenerationService:
         prompt = self._build_prompt(
             material_names=material_names,
             card_count=normalized_card_count,
+            card_count_mode=normalized_card_count_mode,
             card_type_id=card_type_id,
             instructions=instructions,
         )
@@ -550,6 +555,7 @@ class ClaudeCardGenerationService:
         *,
         material_names: Sequence[str],
         card_count: int,
+        card_count_mode: CardCountMode | None = None,
         card_type_id: str = DEFAULT_CARD_TYPE_ID,
         instructions: str | None = None,
     ) -> str:
@@ -557,10 +563,28 @@ class ClaudeCardGenerationService:
             return get_generation_workflow(card_type_id).build_prompt(
                 material_names=material_names,
                 card_count=card_count,
+                card_count_mode=card_count_mode,
                 instructions=instructions,
             )
         except CardGenerationWorkflowError as error:
             raise GenerationServiceError(error.code, error.message, error.details) from error
+
+    def _normalize_card_count_mode(
+        self,
+        card_count_mode: CardCountMode | str | None,
+    ) -> CardCountMode | None:
+        if card_count_mode is None:
+            return None
+        if card_count_mode not in self.CARD_COUNT_MODES:
+            raise GenerationServiceError(
+                "invalid_card_count_mode",
+                "Card count mode must be one of: less, normal, more.",
+                {
+                    "cardCountMode": card_count_mode,
+                    "supportedCardCountModes": sorted(self.CARD_COUNT_MODES),
+                },
+            )
+        return cast(CardCountMode, card_count_mode)
 
     def _normalize_cards(
         self,

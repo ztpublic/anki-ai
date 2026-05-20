@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Union, cast
 
+from .card_generation_workflows import CardCountMode
 from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from .generation_service import (
     CardRegenerationResult,
@@ -74,7 +75,7 @@ class GenerationTransportHandlers:
         self._cancelled_jobs: set[str] = set()
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
-        source_text, materials, card_count, card_type, instructions = (
+        source_text, materials, card_count, card_count_mode, card_type, instructions = (
             self._generation_inputs(params)
         )
 
@@ -83,6 +84,7 @@ class GenerationTransportHandlers:
                 source_text=source_text,
                 materials=materials,
                 card_count=card_count,
+                card_count_mode=card_count_mode,
                 card_type=card_type,
                 instructions=instructions,
             )
@@ -166,7 +168,7 @@ class GenerationTransportHandlers:
                 "Generation events are not available in this bridge context.",
             )
 
-        source_text, materials, card_count, card_type, instructions = (
+        source_text, materials, card_count, card_count_mode, card_type, instructions = (
             self._generation_inputs(params)
         )
         job_id = str(uuid.uuid4())
@@ -223,6 +225,7 @@ class GenerationTransportHandlers:
                 source_text=source_text,
                 materials=materials,
                 card_count=card_count,
+                card_count_mode=card_count_mode,
                 card_type=card_type,
                 instructions=instructions,
                 log_sink=log_sink,
@@ -291,7 +294,14 @@ class GenerationTransportHandlers:
     def _generation_inputs(
         self,
         params: JsonObject,
-    ) -> tuple[str | None, list[MaterialInput], int, str, str | None]:
+    ) -> tuple[
+        str | None,
+        list[MaterialInput],
+        int,
+        CardCountMode | None,
+        str,
+        str | None,
+    ]:
         source_text = _optional_string(params, "sourceText")
         instructions = _optional_text(params, "instructions")
         card_count = _optional_int(
@@ -301,6 +311,7 @@ class GenerationTransportHandlers:
             minimum=1,
             maximum=ClaudeCardGenerationService.MAX_CARD_COUNT,
         )
+        card_count_mode = _optional_card_count_mode(params, "cardCountMode")
         card_type = _optional_card_type(params, "cardType")
         materials = _optional_material_inputs(params, "materials")
 
@@ -313,7 +324,14 @@ class GenerationTransportHandlers:
                 ),
             )
 
-        return source_text, materials, card_count, card_type, instructions
+        return (
+            source_text,
+            materials,
+            card_count,
+            card_count_mode,
+            card_type,
+            instructions,
+        )
 
     def _card_regeneration_inputs(
         self,
@@ -421,6 +439,29 @@ def _optional_card_type(params: JsonObject, key: str) -> str:
             {"cardType": value, "supportedCardTypes": list(card_type_ids())},
         )
     return value
+
+
+def _optional_card_count_mode(params: JsonObject, key: str) -> CardCountMode | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty string when provided.",
+        )
+    if value not in ClaudeCardGenerationService.CARD_COUNT_MODES:
+        raise TransportError(
+            "invalid_params",
+            f"{key} is not a supported card count mode.",
+            {
+                "cardCountMode": value,
+                "supportedCardCountModes": sorted(
+                    ClaudeCardGenerationService.CARD_COUNT_MODES
+                ),
+            },
+        )
+    return cast(CardCountMode, value)
 
 
 def _optional_int(

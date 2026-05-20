@@ -171,6 +171,56 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ],
         )
 
+    def test_generate_cards_supports_qualitative_card_count_modes(self) -> None:
+        expected_prompt_text = {
+            "less": "Generate cards only for important knowledge",
+            "normal": "Use your judgment to generate cards",
+            "more": "Generate cards for all useful knowledge",
+        }
+
+        for mode, prompt_text in expected_prompt_text.items():
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    workspace_path = Path(temp_dir) / "workspace"
+
+                    def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                        self.assertEqual(workspace, workspace_path)
+                        self.assertIn("There is no fixed target number of cards.", prompt)
+                        self.assertIn(prompt_text, prompt)
+                        self.assertIn(
+                            "Then generate the best set of cards for this usefulness policy.",
+                            prompt,
+                        )
+                        self.assertNotIn("Target card count:", prompt)
+                        (workspace / "cards.json").write_text(
+                            json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                            encoding="utf-8",
+                        )
+                        return {}
+
+                    service = ClaudeCardGenerationService(
+                        runner=runner,
+                        workspace_factory=lambda: workspace_path,
+                    )
+
+                    result = service.generate_cards(
+                        source_text="Important facts",
+                        card_count_mode=mode,
+                    )
+
+                self.assertEqual(result["cards"][0]["front"], "Question")
+
+    def test_generate_cards_rejects_invalid_card_count_mode(self) -> None:
+        service = ClaudeCardGenerationService(runner=lambda _prompt, _workspace: {})
+
+        with self.assertRaises(GenerationServiceError) as context:
+            service.generate_cards(
+                source_text="Important facts",
+                card_count_mode="auto",
+            )
+
+        self.assertEqual(context.exception.code, "invalid_card_count_mode")
+
     def test_generate_cards_supports_markdown_card_type(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"

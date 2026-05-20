@@ -6,7 +6,7 @@ import importlib
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from .card_types import (
     BASIC_CARD_TYPE_ID,
@@ -24,6 +24,9 @@ class GeneratedCardBase(TypedDict):
 
 class GeneratedCard(GeneratedCardBase, total=False):
     explanation: str
+
+
+CardCountMode = Literal["less", "normal", "more"]
 
 
 class CardGenerationWorkflowError(Exception):
@@ -49,6 +52,7 @@ class CardGenerationWorkflow(Protocol):
         *,
         material_names: Sequence[str],
         card_count: int,
+        card_count_mode: CardCountMode | None = None,
         instructions: str | None = None,
     ) -> str:
         ...
@@ -73,6 +77,7 @@ class BaseCardGenerationWorkflow:
         *,
         material_names: Sequence[str],
         card_count: int,
+        card_count_mode: CardCountMode | None = None,
         instructions: str | None = None,
     ) -> str:
         try:
@@ -80,6 +85,7 @@ class BaseCardGenerationWorkflow:
             return str(
                 template.render(
                     target_card_count=card_count,
+                    card_count_mode=card_count_mode,
                     material_names=list(material_names),
                     generation_instructions=(
                         instructions.strip()

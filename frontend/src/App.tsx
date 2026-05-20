@@ -47,6 +47,8 @@ type Flashcard = {
 };
 
 type CardTypeId = "basic" | "markdown";
+type CardCountMode = "less" | "normal" | "more";
+type CardCountStrategy = "fixed" | "smart";
 
 type EditableCardField = "front" | "back";
 type CardContentFormat = "plain" | "markdown";
@@ -270,6 +272,15 @@ const SUPPORTED_ATTACHMENT_SUMMARY =
   "PDF, Office, text, web, data, image, audio/video, ZIP";
 
 const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
+const DEFAULT_CARD_COUNT = 5;
+const DEFAULT_CARD_COUNT_STRATEGY: CardCountStrategy = "fixed";
+const DEFAULT_CARD_COUNT_MODE: CardCountMode = "normal";
+
+const CARD_COUNT_MODE_OPTIONS: { id: CardCountMode; label: string }[] = [
+  { id: "less", label: "Less" },
+  { id: "normal", label: "Normal" },
+  { id: "more", label: "More" },
+];
 
 const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
   basic: {
@@ -1063,7 +1074,12 @@ function MarkdownPreview({ html }: { html: string }) {
 export function App() {
   const [instructions, setInstructions] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [cardCount, setCardCount] = useState(5);
+  const [cardCountStrategy, setCardCountStrategy] =
+    useState<CardCountStrategy>(DEFAULT_CARD_COUNT_STRATEGY);
+  const [cardCount, setCardCount] = useState(DEFAULT_CARD_COUNT);
+  const [cardCountMode, setCardCountMode] = useState<CardCountMode>(
+    DEFAULT_CARD_COUNT_MODE,
+  );
   const [selectedCardTypeId, setSelectedCardTypeId] =
     useState<CardTypeId>(DEFAULT_CARD_TYPE_ID);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1515,7 +1531,7 @@ export function App() {
         {
           instructions:
             instructions.trim().length > 0 ? instructions.trim() : undefined,
-          cardCount,
+          ...(cardCountStrategy === "fixed" ? { cardCount } : { cardCountMode }),
           cardType: selectedCardTypeId,
           materials,
         },
@@ -1924,22 +1940,91 @@ export function App() {
             </div>
 
             <div className="space-y-1.5">
-              <label
-                className="flex justify-between text-xs font-semibold text-zinc-600"
-                htmlFor="card-count"
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-zinc-600">
+                  Card Count
+                </span>
+                {cardCountStrategy === "fixed" ? (
+                  <span className="text-xs font-semibold text-indigo-600">
+                    {cardCount}
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold text-indigo-600">
+                    {
+                      CARD_COUNT_MODE_OPTIONS.find(
+                        (option) => option.id === cardCountMode,
+                      )?.label
+                    }
+                  </span>
+                )}
+              </div>
+              <div
+                className="grid grid-cols-2 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
+                role="radiogroup"
+                aria-label="Card count strategy"
               >
-                <span>Number of Cards</span>
-                <span className="text-indigo-600">{cardCount}</span>
-              </label>
-              <input
-                id="card-count"
-                type="range"
-                min="1"
-                max="200"
-                value={cardCount}
-                onChange={(event) => setCardCount(Number(event.target.value))}
-                className="h-2 w-full cursor-pointer appearance-none rounded bg-zinc-300 accent-indigo-600"
-              />
+                {[
+                  { id: "fixed", label: "Fixed" },
+                  { id: "smart", label: "Smart" },
+                ].map((option) => {
+                  const strategy = option.id as CardCountStrategy;
+                  const isSelected = cardCountStrategy === strategy;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => setCardCountStrategy(strategy)}
+                      className={`h-8 rounded text-xs font-semibold transition-colors ${
+                        isSelected
+                          ? "bg-white text-indigo-600 shadow-sm"
+                          : "text-zinc-600 hover:bg-white/70"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {cardCountStrategy === "fixed" ? (
+                <input
+                  id="card-count"
+                  type="range"
+                  min="1"
+                  max="200"
+                  value={cardCount}
+                  onChange={(event) => setCardCount(Number(event.target.value))}
+                  className="h-2 w-full cursor-pointer appearance-none rounded bg-zinc-300 accent-indigo-600"
+                  aria-label="Number of cards"
+                />
+              ) : (
+                <div
+                  className="grid grid-cols-3 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
+                  role="radiogroup"
+                  aria-label="Card density"
+                >
+                  {CARD_COUNT_MODE_OPTIONS.map((option) => {
+                    const isSelected = cardCountMode === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        onClick={() => setCardCountMode(option.id)}
+                        className={`h-8 rounded text-xs font-semibold transition-colors ${
+                          isSelected
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "text-zinc-600 hover:bg-white/70"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <button

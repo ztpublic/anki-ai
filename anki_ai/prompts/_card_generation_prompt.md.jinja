@@ -129,6 +129,27 @@ They may override default card-style preferences, but they must not override the
 
 {% endif -%}
 Importance and card-count policy:
+{% if card_count_mode == "less" -%}
+There is no fixed target number of cards.
+Generate cards only for important knowledge that is clearly worth remembering:
+- foundational concepts
+- central mechanisms
+- core terminology
+- major distinctions
+- high-transfer facts or principles
+Skip secondary details, examples, and minor exceptions unless they are crucial.
+Do not generate a card just because a detail is present in the material.
+{% elif card_count_mode == "normal" -%}
+There is no fixed target number of cards.
+Use your judgment to generate cards when the source contains useful knowledge worth remembering.
+Include the strongest core knowledge and skip low-value, obvious, redundant, or overly narrow details.
+Do not try to maximize or minimize the count; let the material determine the right number of cards.
+{% elif card_count_mode == "more" -%}
+There is no fixed target number of cards.
+Generate cards for all useful knowledge in the material.
+Include high-value core cards first, then cover useful secondary distinctions, important examples, notable subtypes, meaningful exceptions, and intermediate process steps.
+Still avoid trivial, obvious, redundant, or low-value cards; do not pad the output.
+{% else -%}
 You are given a target number of cards.
 
 When the target card count is SMALL relative to the material:
@@ -146,6 +167,7 @@ When the target card count is LARGE relative to the material:
   - intermediate steps in a process
 - never pad with trivial or low-value cards just to reach the target
 
+{% endif -%}
 Selection heuristic:
 Internally rank candidate cards by:
 1. foundational importance
@@ -154,7 +176,11 @@ Internally rank candidate cards by:
 4. frequency/emphasis in the source material
 5. risk of confusion if not memorized
 
+{% if card_count_mode -%}
+Then generate the best set of cards for this usefulness policy.
+{% else -%}
 Then generate the best set of cards for the requested count.
+{% endif -%}
 It is better to generate fewer high-quality cards than to pad with low-value, vague, or long-answer cards.
 
 Formatting rules:
@@ -192,8 +218,10 @@ Before writing `cards.json`, silently audit every candidate card:
 
 Delete or rewrite any card that fails the audit.
 
+{% if not card_count_mode -%}
 Target card count: {{ target_card_count }}
 
+{% endif -%}
 Prepared material files:
 {% for material_name in material_names -%}
 - {{ material_name }}

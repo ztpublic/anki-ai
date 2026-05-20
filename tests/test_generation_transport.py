@@ -35,6 +35,7 @@ class FakeGenerationService:
         source_text: str | None = None,
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
+        card_count_mode: str | None = None,
         card_type: str = "basic",
         instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
@@ -54,6 +55,7 @@ class FakeGenerationService:
                 "source_text": source_text,
                 "materials": [] if materials is None else materials,
                 "card_count": card_count,
+                "card_count_mode": card_count_mode,
                 "card_type": card_type,
                 "instructions": instructions,
             }
@@ -100,6 +102,7 @@ class RateLimitedGenerationService:
         source_text: str | None = None,
         materials: list[dict[str, str]] | None = None,
         card_count: int = 5,
+        card_count_mode: str | None = None,
         card_type: str = "basic",
         instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
@@ -107,6 +110,7 @@ class RateLimitedGenerationService:
         _ = source_text
         _ = materials
         _ = card_count
+        _ = card_count_mode
         _ = card_type
         _ = instructions
         _ = log_sink
@@ -154,11 +158,52 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "source_text": "Important facts",
                     "materials": [{"name": "notes.md", "contentBase64": "aGVsbG8="}],
                     "card_count": 7,
+                    "card_count_mode": None,
                     "card_type": "basic",
                     "instructions": "Only generate yes/no questions.",
                 }
             ],
         )
+
+    def test_generate_cards_accepts_card_count_mode(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {
+                    "sourceText": "Important facts",
+                    "cardCount": 12,
+                    "cardCountMode": "more",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(service.calls[-1]["card_count"], 12)
+        self.assertEqual(service.calls[-1]["card_count_mode"], "more")
+
+    def test_generate_cards_rejects_invalid_card_count_mode(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {"sourceText": "Important facts", "cardCountMode": "auto"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
+        self.assertEqual(service.calls, [])
 
     def test_generate_cards_rejects_removed_answer_with_explanation_card_type(
         self,
@@ -446,7 +491,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         response = router.handle_raw_message(
             request_message(
                 "anki.generation.startGenerateCards",
-                {"sourceText": "Important facts"},
+                {"sourceText": "Important facts", "cardCountMode": "normal"},
             )
         )
 
@@ -464,6 +509,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertEqual(events[1][1]["source"], "llm")
         self.assertEqual(events[1][1]["role"], "LLM -> Claude Code")
         self.assertEqual(events[1][1]["part"], {"type": "text", "text": "draft cards"})
+        self.assertEqual(service.calls[-1]["card_count_mode"], "normal")
         self.assertEqual(events[2][1]["result"]["cards"][0]["front"], "Front")
 
     def test_start_generate_cards_reports_event_unavailable_without_emitter(
