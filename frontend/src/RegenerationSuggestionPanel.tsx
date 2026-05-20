@@ -37,6 +37,14 @@ export function RegenerationSuggestionPanel({
   const [instructions, setInstructions] = useState("");
   const regenerationInstructions =
     instructions.trim().length > 0 ? instructions.trim() : undefined;
+  const handleAccept = () => {
+    onAccept();
+    setInstructions("");
+  };
+  const handleDiscard = () => {
+    onDiscard();
+    setInstructions("");
+  };
 
   return (
     <div className={`shrink-0 border-t border-zinc-200 bg-white px-4 py-3 ${className}`}>
@@ -109,7 +117,7 @@ export function RegenerationSuggestionPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={onDiscard}
+                  onClick={handleDiscard}
                   className="rounded-md border border-transparent p-1.5 text-rose-600 transition-colors hover:border-rose-200 hover:bg-white"
                   aria-label="Dismiss suggestion error"
                 >
@@ -132,7 +140,7 @@ export function RegenerationSuggestionPanel({
               <div className="flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  onClick={onDiscard}
+                  onClick={handleDiscard}
                   className="flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
                 >
                   <X className="h-4 w-4" />
@@ -140,7 +148,7 @@ export function RegenerationSuggestionPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={onAccept}
+                  onClick={handleAccept}
                   className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
                 >
                   <CheckCircle2 className="h-4 w-4" />

@@ -1468,6 +1468,21 @@ export function App() {
       return;
     }
 
+    if (
+      generatedCards.length > 0 &&
+      !window.confirm(
+        `There ${
+          generatedCards.length === 1 ? "is" : "are"
+        } ${generatedCards.length} unsaved generated ${
+          generatedCards.length === 1 ? "card" : "cards"
+        }. Generating again will discard ${
+          generatedCards.length === 1 ? "it" : "them"
+        }. Continue?`,
+      )
+    ) {
+      return;
+    }
+
     stopGenerationRequestedRef.current = false;
     const requestId = generationRequestIdRef.current + 1;
     generationRequestIdRef.current = requestId;

@@ -109,9 +109,25 @@ make vendor-python
 
 This is required because Anki runs add-ons with its own Python environment and
 does not install this repository's `pyproject.toml` dependencies automatically.
-The generation backend loads `claude-agent-sdk` and `markitdown[all]` from
-`anki_ai/vendor/` when present, then falls back to the repo `.venv` for local
-symlink development.
+The generation backend loads `claude-agent-sdk` and the configured MarkItDown
+extras from `anki_ai/vendor/` when present, then falls back to the repo `.venv`
+for local symlink development.
+
+`make build` is incremental. It only rebuilds frontend assets when frontend
+inputs change, only refreshes `anki_ai/vendor/` when the vendored dependency
+request changes, and only rewrites `dist/anki_ai.ankiaddon` when package inputs
+are newer than the archive. Use `make vendor-python-refresh` to force a clean
+vendored dependency install.
+
+To keep the add-on archive smaller, the default vendored dependency set avoids
+`markitdown[all]`, prunes dependency test and console-script payloads, and does
+not package the bundled Claude Code CLI from `claude-agent-sdk`. Install Claude
+Code separately or set `generation.claudeCliPath` if Anki cannot discover it.
+For a self-contained archive with the SDK's bundled Claude CLI, run:
+
+```shell
+make build VENDOR_INCLUDE_CLAUDE_CLI=1
+```
 
 Claude Code generation must also have Anthropic-compatible authentication
 available to the Anki process. Anki launched from Finder or Spotlight usually
