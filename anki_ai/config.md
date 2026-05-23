@@ -24,6 +24,7 @@ It reads assignments only; it does not execute shell code.
 - `claudeConfigDir`: maps to `CLAUDE_CONFIG_DIR`.
 - `claudeCliPath`: optional absolute path to the Claude Code executable.
 - `codexApiKey`: maps to `OPENAI_API_KEY`; omit it to reuse existing Codex auth.
+- `codexHome`: maps to `CODEX_HOME`; defaults to `~/.codex` so Codex Mac app/CLI login can be reused.
 - `codexModel`: optional Codex model override.
 - `codexReasoningEffort`: optional reasoning effort override; defaults to `high`.
 - `codexCliPath`: optional absolute path to a specific Codex executable.

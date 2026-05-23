@@ -167,6 +167,7 @@ GENERATION_ENV_CONFIG_KEYS = {
 GENERATION_ENV_KEYS = tuple(GENERATION_ENV_CONFIG_KEYS.values())
 CODEX_ENV_CONFIG_KEYS = {
     "codexApiKey": "OPENAI_API_KEY",
+    "codexHome": "CODEX_HOME",
 }
 CODEX_ENV_KEYS = tuple(CODEX_ENV_CONFIG_KEYS.values())
 
@@ -904,8 +905,12 @@ async def _run_codex_generation_async(
         client_kwargs: dict[str, Any] = {}
         codex_bin = _configured_codex_cli_path()
         app_server_config = getattr(sdk, "AppServerConfig", None)
-        if codex_bin and app_server_config is not None:
-            client_kwargs["config"] = app_server_config(codex_bin=codex_bin)
+        app_server_env = _codex_app_server_environment()
+        if app_server_config is not None and (codex_bin or app_server_env):
+            client_kwargs["config"] = app_server_config(
+                codex_bin=codex_bin,
+                env=app_server_env or None,
+            )
 
         async with sdk.AsyncCodex(**client_kwargs) as codex:
             api_key = _configured_codex_api_key()
@@ -1439,6 +1444,7 @@ def _runtime_diagnostics() -> dict[str, Any]:
         "HTTPS_PROXY",
         "NO_PROXY",
         "OPENAI_API_KEY",
+        "CODEX_HOME",
     )
     return {
         "pythonExecutable": sys.executable,
@@ -1561,6 +1567,13 @@ def _codex_environment() -> dict[str, str]:
         value = config.get(config_key)
         if isinstance(value, str) and value.strip():
             env[env_key] = value.strip()
+    return env
+
+
+def _codex_app_server_environment() -> dict[str, str]:
+    env = _codex_environment()
+    if "CODEX_HOME" not in env:
+        env["CODEX_HOME"] = str(Path.home() / ".codex")
     return env
 
 

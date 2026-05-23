@@ -133,10 +133,11 @@ make build VENDOR_INCLUDE_CLAUDE_CLI=1
 
 Claude generation must have Anthropic-compatible authentication available to the
 Anki process. Codex generation uses `OPENAI_API_KEY`, `generation.codexApiKey`,
-or an existing Codex login state. Anki launched from Finder or Spotlight usually
-does not inherit shell environment variables, so a terminal setup that works for
-`claude` or `codex` may still be invisible to the add-on. Set the values under
-`generation` in Anki's add-on config or in an ignored
+or an existing Codex login state from `CODEX_HOME` (defaulting to `~/.codex`).
+Anki launched from Finder or Spotlight usually does not inherit shell
+environment variables, so a terminal setup that works for `claude` or `codex`
+may still be invisible to the add-on. Set the values under `generation` in
+Anki's add-on config or in an ignored
 `anki_ai/config.local.json`, for example:
 
 ```json
@@ -148,6 +149,7 @@ does not inherit shell environment variables, so a terminal setup that works for
     "anthropicModel": "provider-model-name",
     "claudeCliPath": "/Users/you/.local/bin/claude",
     "codexApiKey": "",
+    "codexHome": "/Users/you/.codex",
     "codexModel": "gpt-5.4",
     "codexReasoningEffort": "high",
     "codexCliPath": "/Users/you/.local/bin/codex"
@@ -158,8 +160,9 @@ does not inherit shell environment variables, so a terminal setup that works for
 `anthropicAuthToken` maps to `ANTHROPIC_AUTH_TOKEN`; alternatively use
 `anthropicApiKey` for `ANTHROPIC_API_KEY`. `codexApiKey` maps to
 `OPENAI_API_KEY`; leave it empty when you want the Codex SDK to reuse an
-existing login. Leave secrets out of commits and set them only in your local
-add-on configuration.
+existing login. `codexHome` maps to `CODEX_HOME`; use it when your Codex login
+state is not in the default `~/.codex`. Leave secrets out of commits and set
+them only in your local add-on configuration.
 
 As a convenience for local development, the add-on also reads simple
 `export KEY=value` or `KEY=value` assignments for the same keys from common shell

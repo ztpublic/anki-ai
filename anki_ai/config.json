@@ -10,6 +10,7 @@
     "claudeConfigDir": "",
     "claudeCliPath": "",
     "codexApiKey": "",
+    "codexHome": "",
     "codexModel": "",
     "codexReasoningEffort": "",
     "codexCliPath": ""

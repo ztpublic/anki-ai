@@ -1011,7 +1011,15 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 captured_thread_kwargs.update(kwargs)
                 return FakeThread()
 
-        fake_sdk = SimpleNamespace(AsyncCodex=FakeAsyncCodex)
+        class FakeAppServerConfig:
+            def __init__(self, **kwargs: object) -> None:
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        fake_sdk = SimpleNamespace(
+            AppServerConfig=FakeAppServerConfig,
+            AsyncCodex=FakeAsyncCodex,
+        )
         logs: list[GenerationLogEvent] = []
         workspace = Path("/tmp/fake-workspace")
 
@@ -1022,6 +1030,11 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ),
             patch.object(generation_module, "_configured_codex_cli_path", return_value=None),
             patch.object(generation_module, "_configured_codex_api_key", return_value="sk-test"),
+            patch.object(
+                generation_module,
+                "_codex_app_server_environment",
+                return_value={"CODEX_HOME": "/Users/test/.codex"},
+            ),
             patch.object(generation_module, "_configured_codex_model", return_value="gpt-test"),
             patch.object(
                 generation_module,
@@ -1038,7 +1051,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(captured_client_kwargs, {})
+        config = captured_client_kwargs["config"]
+        self.assertEqual(getattr(config, "codex_bin"), None)
+        self.assertEqual(getattr(config, "env"), {"CODEX_HOME": "/Users/test/.codex"})
         self.assertEqual(login_keys, ["sk-test"])
         self.assertEqual(captured_thread_kwargs["cwd"], str(workspace))
         self.assertEqual(captured_thread_kwargs["model"], "gpt-test")
