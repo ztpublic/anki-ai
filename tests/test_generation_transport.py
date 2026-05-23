@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from collections.abc import Callable
+from unittest.mock import patch
 
 from anki_ai.generation_service import GenerationLogEvent, GenerationServiceError
 from anki_ai.generation_transport import register_generation_transport_handlers
@@ -231,6 +232,88 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "invalid_params")
         self.assertEqual(service.calls, [])
+
+    def test_get_config_returns_generation_harness_config(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        with patch(
+            "anki_ai.generation_transport.generation_harness_config",
+            return_value={
+                "agentProvider": "codex",
+                "httpProxy": "http://proxy.test:8080",
+                "httpsProxy": "http://secure-proxy.test:8443",
+                "noProxy": "localhost",
+            },
+        ):
+            response = router.handle_raw_message(
+                request_message("anki.generation.getConfig")
+            )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"]["agentProvider"], "codex")
+        self.assertEqual(response["result"]["httpProxy"], "http://proxy.test:8080")
+
+    def test_update_config_updates_generation_harness_config(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        with patch(
+            "anki_ai.generation_transport.update_generation_harness_config",
+            return_value={
+                "agentProvider": "codex",
+                "httpProxy": "http://proxy.test:8080",
+                "httpsProxy": "",
+                "noProxy": "",
+            },
+        ) as update_config:
+            response = router.handle_raw_message(
+                request_message(
+                    "anki.generation.updateConfig",
+                    {
+                        "agentProvider": "codex",
+                        "httpProxy": "http://proxy.test:8080",
+                    },
+                )
+            )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        update_config.assert_called_once_with(
+            {"agentProvider": "codex", "httpProxy": "http://proxy.test:8080"}
+        )
+        self.assertEqual(response["result"]["agentProvider"], "codex")
+
+    def test_update_config_rejects_invalid_agent_provider(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        with patch(
+            "anki_ai.generation_transport.update_generation_harness_config",
+            side_effect=GenerationServiceError(
+                "invalid_agent_provider",
+                "generation.agentProvider must be one of: claude, codex.",
+                {"agentProvider": "other"},
+            ),
+        ):
+            response = router.handle_raw_message(
+                request_message(
+                    "anki.generation.updateConfig",
+                    {"agentProvider": "other"},
+                )
+            )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_agent_provider")
+        self.assertEqual(response["error"]["details"]["agentProvider"], "other")
 
     def test_generate_cards_rejects_invalid_card_count_mode(self) -> None:
         service = FakeGenerationService()

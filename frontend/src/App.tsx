@@ -101,6 +101,13 @@ type StartRegenerateAnswerResponse = {
   jobId: string;
 };
 
+type GenerationHarnessConfig = {
+  agentProvider: AgentProvider;
+  httpProxy: string;
+  httpsProxy: string;
+  noProxy: string;
+};
+
 type GenerationJobError = {
   code: string;
   message: string;
@@ -278,6 +285,12 @@ const DEFAULT_CARD_COUNT = 5;
 const DEFAULT_CARD_COUNT_STRATEGY: CardCountStrategy = "fixed";
 const DEFAULT_CARD_COUNT_MODE: CardCountMode = "normal";
 const DEFAULT_AGENT_PROVIDER: AgentProvider = "claude";
+const DEFAULT_GENERATION_HARNESS_CONFIG: GenerationHarnessConfig = {
+  agentProvider: DEFAULT_AGENT_PROVIDER,
+  httpProxy: "",
+  httpsProxy: "",
+  noProxy: "",
+};
 
 const CARD_COUNT_MODE_OPTIONS: { id: CardCountMode; label: string }[] = [
   { id: "less", label: "Less" },
@@ -285,7 +298,7 @@ const CARD_COUNT_MODE_OPTIONS: { id: CardCountMode; label: string }[] = [
   { id: "more", label: "More" },
 ];
 const AGENT_PROVIDER_OPTIONS: { id: AgentProvider; label: string }[] = [
-  { id: "claude", label: "Claude" },
+  { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
 ];
 
@@ -394,6 +407,32 @@ function saveErrorMessage(error: unknown): string {
   }
 
   return "Cards could not be saved.";
+}
+
+function generationConfigErrorMessage(error: unknown): string {
+  if (error instanceof BridgeTransportError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Agent settings could not be saved.";
+}
+
+function normalizeGenerationHarnessConfig(
+  value: Partial<GenerationHarnessConfig>,
+): GenerationHarnessConfig {
+  return {
+    agentProvider:
+      value.agentProvider === "codex" || value.agentProvider === "claude"
+        ? value.agentProvider
+        : DEFAULT_AGENT_PROVIDER,
+    httpProxy: typeof value.httpProxy === "string" ? value.httpProxy : "",
+    httpsProxy: typeof value.httpsProxy === "string" ? value.httpsProxy : "",
+    noProxy: typeof value.noProxy === "string" ? value.noProxy : "",
+  };
 }
 
 async function renderMarkdownToHtml(markdown: string): Promise<string> {
@@ -1151,8 +1190,16 @@ export function App() {
   const [cardCountMode, setCardCountMode] = useState<CardCountMode>(
     DEFAULT_CARD_COUNT_MODE,
   );
-  const [selectedAgentProvider, setSelectedAgentProvider] =
-    useState<AgentProvider>(DEFAULT_AGENT_PROVIDER);
+  const [generationHarnessConfig, setGenerationHarnessConfig] =
+    useState<GenerationHarnessConfig>(DEFAULT_GENERATION_HARNESS_CONFIG);
+  const [draftGenerationHarnessConfig, setDraftGenerationHarnessConfig] =
+    useState<GenerationHarnessConfig>(DEFAULT_GENERATION_HARNESS_CONFIG);
+  const [isAgentSettingsOpen, setIsAgentSettingsOpen] = useState(false);
+  const [isLoadingAgentSettings, setIsLoadingAgentSettings] = useState(false);
+  const [isSavingAgentSettings, setIsSavingAgentSettings] = useState(false);
+  const [agentSettingsError, setAgentSettingsError] = useState<string | null>(
+    null,
+  );
   const [selectedCardTypeId, setSelectedCardTypeId] =
     useState<CardTypeId>(DEFAULT_CARD_TYPE_ID);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1336,6 +1383,42 @@ export function App() {
       if (retryTimeoutId !== undefined) {
         window.clearTimeout(retryTimeoutId);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAgentSettings = async () => {
+      setIsLoadingAgentSettings(true);
+      setAgentSettingsError(null);
+      try {
+        const result = await window.AnkiAI.call<GenerationHarnessConfig>(
+          "anki.generation.getConfig",
+          {},
+          { timeoutMs: 5000 },
+        );
+        if (cancelled) {
+          return;
+        }
+        const normalizedConfig = normalizeGenerationHarnessConfig(result);
+        setGenerationHarnessConfig(normalizedConfig);
+        setDraftGenerationHarnessConfig(normalizedConfig);
+      } catch (error) {
+        if (!cancelled) {
+          setAgentSettingsError(generationConfigErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingAgentSettings(false);
+        }
+      }
+    };
+
+    void loadAgentSettings();
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -1620,7 +1703,7 @@ export function App() {
             instructions.trim().length > 0 ? instructions.trim() : undefined,
           ...(cardCountStrategy === "fixed" ? { cardCount } : { cardCountMode }),
           cardType: selectedCardTypeId,
-          agentProvider: selectedAgentProvider,
+          agentProvider: generationHarnessConfig.agentProvider,
           materials,
         },
         { timeoutMs: 10000 },
@@ -1825,7 +1908,7 @@ export function App() {
           question: currentCard.front,
           answer: currentCard.back,
           explanation: currentCard.explanation ?? "",
-          agentProvider: selectedAgentProvider,
+          agentProvider: generationHarnessConfig.agentProvider,
           ...(regenerationInstructions
             ? { instructions: regenerationInstructions }
             : {}),
@@ -1890,8 +1973,54 @@ export function App() {
     setSuggestedReplacement(null);
   };
 
+  const openAgentSettings = () => {
+    setDraftGenerationHarnessConfig(generationHarnessConfig);
+    setAgentSettingsError(null);
+    setIsAgentSettingsOpen(true);
+  };
+
+  const closeAgentSettings = () => {
+    if (isSavingAgentSettings) {
+      return;
+    }
+    setIsAgentSettingsOpen(false);
+    setDraftGenerationHarnessConfig(generationHarnessConfig);
+  };
+
+  const updateDraftAgentSettings = (
+    key: keyof GenerationHarnessConfig,
+    value: string,
+  ) => {
+    setDraftGenerationHarnessConfig((previousConfig) => ({
+      ...previousConfig,
+      [key]: value,
+    }));
+  };
+
+  const handleSaveAgentSettings = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsSavingAgentSettings(true);
+    setAgentSettingsError(null);
+    try {
+      const result = await window.AnkiAI.call<GenerationHarnessConfig>(
+        "anki.generation.updateConfig",
+        draftGenerationHarnessConfig,
+        { timeoutMs: 5000 },
+      );
+      const normalizedConfig = normalizeGenerationHarnessConfig(result);
+      setGenerationHarnessConfig(normalizedConfig);
+      setDraftGenerationHarnessConfig(normalizedConfig);
+      setIsAgentSettingsOpen(false);
+    } catch (error) {
+      setAgentSettingsError(generationConfigErrorMessage(error));
+    } finally {
+      setIsSavingAgentSettings(false);
+    }
+  };
+
   return (
-    <div className="flex h-full overflow-hidden bg-zinc-200 p-4 font-sans text-zinc-900 selection:bg-indigo-100 selection:text-indigo-900">
+    <>
+      <div className="flex h-full overflow-hidden bg-zinc-200 p-4 font-sans text-zinc-900 selection:bg-indigo-100 selection:text-indigo-900">
       <main className="mx-auto flex h-full max-h-[820px] min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-300 bg-zinc-50 shadow-[0_8px_30px_rgba(24,24,27,0.14)] lg:flex-row">
         <section className="flex min-h-0 w-full flex-col border-b border-zinc-300 bg-zinc-100 lg:w-[330px] lg:border-b-0 lg:border-r">
           <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
@@ -1899,9 +2028,20 @@ export function App() {
               <Settings className="h-4 w-4 text-zinc-500" />
               Generator Settings
             </h2>
-            <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
-              <Library className="h-3.5 w-3.5" />
-              <span>{savedLibrary.length}</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+                <Library className="h-3.5 w-3.5" />
+                <span>{savedLibrary.length}</span>
+              </div>
+              <button
+                type="button"
+                onClick={openAgentSettings}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-300 bg-white text-zinc-600 transition-colors hover:border-indigo-300 hover:text-indigo-600 disabled:bg-zinc-100 disabled:text-zinc-400"
+                aria-label="Open agent settings"
+                disabled={isLoadingAgentSettings}
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
             </div>
           </div>
 
@@ -1961,38 +2101,6 @@ export function App() {
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="block text-xs font-semibold text-zinc-600">
-                Agent
-              </span>
-              <div
-                className="grid grid-cols-2 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
-                role="radiogroup"
-                aria-label="Generation agent"
-              >
-                {AGENT_PROVIDER_OPTIONS.map((option) => {
-                  const isSelected = selectedAgentProvider === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={isSelected}
-                      onClick={() => setSelectedAgentProvider(option.id)}
-                      className={`flex h-8 items-center justify-center gap-1.5 rounded text-xs font-semibold transition-colors ${
-                        isSelected
-                          ? "bg-white text-indigo-600 shadow-sm"
-                          : "text-zinc-600 hover:bg-white/70"
-                      }`}
-                    >
-                      <Bot className="h-3.5 w-3.5" />
-                      <span>{option.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -2403,6 +2511,161 @@ export function App() {
           )}
         </section>
       </main>
-    </div>
+      </div>
+      {isAgentSettingsOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/45 p-4">
+          <form
+            className="w-full max-w-md overflow-hidden rounded-lg border border-zinc-300 bg-white shadow-xl"
+            onSubmit={handleSaveAgentSettings}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="agent-settings-title"
+          >
+            <div className="flex h-12 items-center justify-between border-b border-zinc-200 px-4">
+              <h2
+                id="agent-settings-title"
+                className="flex items-center gap-2 text-sm font-semibold text-zinc-800"
+              >
+                <Bot className="h-4 w-4 text-zinc-500" />
+                Agent Settings
+              </h2>
+              <button
+                type="button"
+                onClick={closeAgentSettings}
+                disabled={isSavingAgentSettings}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50"
+                aria-label="Close agent settings"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-4 py-4">
+              <div className="space-y-1.5">
+                <span className="block text-xs font-semibold text-zinc-600">
+                  Agent
+                </span>
+                <div
+                  className="grid grid-cols-2 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
+                  role="radiogroup"
+                  aria-label="Generation agent"
+                >
+                  {AGENT_PROVIDER_OPTIONS.map((option) => {
+                    const isSelected =
+                      draftGenerationHarnessConfig.agentProvider === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        onClick={() =>
+                          updateDraftAgentSettings("agentProvider", option.id)
+                        }
+                        className={`flex h-8 items-center justify-center gap-1.5 rounded text-xs font-semibold transition-colors ${
+                          isSelected
+                            ? "bg-white text-indigo-600 shadow-sm"
+                            : "text-zinc-600 hover:bg-white/70"
+                        }`}
+                      >
+                        <Bot className="h-3.5 w-3.5" />
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  className="block text-xs font-semibold text-zinc-600"
+                  htmlFor="agent-http-proxy"
+                >
+                  HTTP proxy
+                </label>
+                <input
+                  id="agent-http-proxy"
+                  type="text"
+                  value={draftGenerationHarnessConfig.httpProxy}
+                  onChange={(event) =>
+                    updateDraftAgentSettings("httpProxy", event.target.value)
+                  }
+                  className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  placeholder="http://127.0.0.1:7890"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  className="block text-xs font-semibold text-zinc-600"
+                  htmlFor="agent-https-proxy"
+                >
+                  HTTPS proxy
+                </label>
+                <input
+                  id="agent-https-proxy"
+                  type="text"
+                  value={draftGenerationHarnessConfig.httpsProxy}
+                  onChange={(event) =>
+                    updateDraftAgentSettings("httpsProxy", event.target.value)
+                  }
+                  className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  placeholder="http://127.0.0.1:7890"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  className="block text-xs font-semibold text-zinc-600"
+                  htmlFor="agent-no-proxy"
+                >
+                  No proxy
+                </label>
+                <input
+                  id="agent-no-proxy"
+                  type="text"
+                  value={draftGenerationHarnessConfig.noProxy}
+                  onChange={(event) =>
+                    updateDraftAgentSettings("noProxy", event.target.value)
+                  }
+                  className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  placeholder="localhost,127.0.0.1"
+                />
+              </div>
+
+              {agentSettingsError !== null ? (
+                <div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span className="whitespace-pre-wrap break-words">
+                    {agentSettingsError}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 bg-zinc-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={closeAgentSettings}
+                disabled={isSavingAgentSettings}
+                className="flex h-8 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingAgentSettings || isLoadingAgentSettings}
+                className="flex h-8 items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500"
+              >
+                {isSavingAgentSettings ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : null}
+                {isSavingAgentSettings ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+    </>
   );
 }

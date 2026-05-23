@@ -17,6 +17,8 @@ from .generation_service import (
     GenerationResult,
     GenerationServiceError,
     MaterialInput,
+    generation_harness_config,
+    update_generation_harness_config,
 )
 from .transport import JsonObject, TransportError, TransportRouter
 
@@ -52,6 +54,8 @@ def register_generation_transport_handlers(
         handlers.start_regenerate_answer,
     )
     router.register("anki.generation.stopGenerateCards", handlers.stop_generate_cards)
+    router.register("anki.generation.getConfig", handlers.get_config)
+    router.register("anki.generation.updateConfig", handlers.update_config)
 
 
 class GenerationTransportHandlers:
@@ -74,6 +78,19 @@ class GenerationTransportHandlers:
         self._jobs_lock = threading.Lock()
         self._active_jobs: set[str] = set()
         self._cancelled_jobs: set[str] = set()
+
+    def get_config(self, params: JsonObject) -> JsonObject:
+        _ = params
+        try:
+            return generation_harness_config()
+        except GenerationServiceError as error:
+            raise TransportError(error.code, error.message, error.details) from error
+
+    def update_config(self, params: JsonObject) -> JsonObject:
+        try:
+            return update_generation_harness_config(params)
+        except GenerationServiceError as error:
+            raise TransportError(error.code, error.message, error.details) from error
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
         source_text, materials, card_count, card_count_mode, card_type, instructions = (

@@ -168,8 +168,17 @@ GENERATION_ENV_KEYS = tuple(GENERATION_ENV_CONFIG_KEYS.values())
 CODEX_ENV_CONFIG_KEYS = {
     "codexApiKey": "OPENAI_API_KEY",
     "codexHome": "CODEX_HOME",
+    "httpProxy": "HTTP_PROXY",
+    "httpsProxy": "HTTPS_PROXY",
+    "noProxy": "NO_PROXY",
 }
 CODEX_ENV_KEYS = tuple(CODEX_ENV_CONFIG_KEYS.values())
+GENERATION_HARNESS_CONFIG_KEYS = (
+    "agentProvider",
+    "httpProxy",
+    "httpsProxy",
+    "noProxy",
+)
 
 
 def _default_workspace_factory() -> Path:
@@ -1581,6 +1590,65 @@ def _configured_agent_provider() -> AgentProvider:
     return _normalize_agent_provider(_generation_config().get("agentProvider"))
 
 
+def generation_harness_config() -> dict[str, str]:
+    config = _generation_config()
+    return {
+        "agentProvider": _configured_agent_provider(),
+        "httpProxy": _config_string(config, "httpProxy"),
+        "httpsProxy": _config_string(config, "httpsProxy"),
+        "noProxy": _config_string(config, "noProxy"),
+    }
+
+
+def update_generation_harness_config(values: dict[str, Any]) -> dict[str, str]:
+    allowed_keys = set(GENERATION_HARNESS_CONFIG_KEYS)
+    unexpected_keys = sorted(key for key in values if key not in allowed_keys)
+    if unexpected_keys:
+        raise GenerationServiceError(
+            "invalid_generation_config",
+            "Generation config contained unsupported keys.",
+            {"unsupportedKeys": unexpected_keys},
+        )
+
+    local_config = _read_config_file(ADDON_LOCAL_CONFIG_PATH)
+    generation_config = local_config.get("generation")
+    if not isinstance(generation_config, dict):
+        generation_config = {}
+    else:
+        generation_config = dict(generation_config)
+
+    if "agentProvider" in values:
+        generation_config["agentProvider"] = _normalize_agent_provider(
+            values["agentProvider"]
+        )
+
+    for key in ("httpProxy", "httpsProxy", "noProxy"):
+        if key not in values:
+            continue
+        value = values[key]
+        if not isinstance(value, str):
+            raise GenerationServiceError(
+                "invalid_generation_config",
+                f"generation.{key} must be a string.",
+                {"field": key},
+            )
+        normalized_value = value.strip()
+        if normalized_value:
+            generation_config[key] = normalized_value
+        else:
+            generation_config.pop(key, None)
+
+    local_config = dict(local_config)
+    local_config["generation"] = generation_config
+    _write_config_file(ADDON_LOCAL_CONFIG_PATH, local_config)
+    return generation_harness_config()
+
+
+def _config_string(config: dict[str, Any], key: str) -> str:
+    value = config.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _normalize_agent_provider(value: AgentProvider | str | None) -> AgentProvider:
     configured = DEFAULT_AGENT_PROVIDER if value is None else value
     if not isinstance(configured, str) or not configured.strip():
@@ -1765,6 +1833,21 @@ def _read_config_file(config_path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _write_config_file(config_path: Path, config: dict[str, Any]) -> None:
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            f"{json.dumps(config, ensure_ascii=False, indent=2)}\n",
+            encoding="utf-8",
+        )
+    except OSError as error:
+        raise GenerationServiceError(
+            "generation_config_write_failed",
+            "Generation config could not be saved.",
+            {"configPath": str(config_path), "error": str(error)},
+        ) from error
 
 
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

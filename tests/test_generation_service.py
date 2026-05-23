@@ -19,10 +19,13 @@ from anki_ai.generation_service import (
     ClaudeCardGenerationService,
     GenerationLogEvent,
     GenerationServiceError,
+    _codex_app_server_environment,
     _generation_environment,
     _run_agent_generation,
     _run_claude_generation_async,
     _run_codex_generation_async,
+    generation_harness_config,
+    update_generation_harness_config,
 )
 
 
@@ -547,6 +550,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                             "anthropicAuthToken": "configured-token",
                             "anthropicBaseUrl": "https://example.test",
                             "anthropicModel": "configured-model",
+                            "httpProxy": "http://proxy.test:8080",
+                            "httpsProxy": "http://secure-proxy.test:8443",
+                            "noProxy": "localhost,127.0.0.1",
                         }
                     }
                 ),
@@ -568,6 +574,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "configured-token")
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://example.test")
         self.assertEqual(env["ANTHROPIC_MODEL"], "configured-model")
+        self.assertEqual(env["HTTP_PROXY"], "http://proxy.test:8080")
+        self.assertEqual(env["HTTPS_PROXY"], "http://secure-proxy.test:8443")
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1")
 
     def test_generation_environment_loads_shell_startup_exports(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -651,6 +660,170 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "local-token")
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://base.example")
         self.assertEqual(env["ANTHROPIC_MODEL"], "local-model")
+
+    def test_generation_harness_config_returns_merged_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config_path = Path(temp_dir) / "config.json"
+            local_config_path = Path(temp_dir) / "config.local.json"
+            base_config_path.write_text(
+                json.dumps(
+                    {
+                        "generation": {
+                            "agentProvider": "claude",
+                            "httpProxy": "http://base-proxy.test:8080",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            local_config_path.write_text(
+                json.dumps(
+                    {
+                        "generation": {
+                            "agentProvider": "codex",
+                            "httpsProxy": "http://local-proxy.test:8443",
+                            "noProxy": "localhost",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(generation_module, "ADDON_CONFIG_PATH", base_config_path),
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    local_config_path,
+                ),
+                patch.dict(os.environ, {"ANKI_AI_CONFIG_PATH": ""}, clear=False),
+            ):
+                config = generation_harness_config()
+
+        self.assertEqual(
+            config,
+            {
+                "agentProvider": "codex",
+                "httpProxy": "http://base-proxy.test:8080",
+                "httpsProxy": "http://local-proxy.test:8443",
+                "noProxy": "localhost",
+            },
+        )
+
+    def test_update_generation_harness_config_writes_local_generation_only(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config_path = Path(temp_dir) / "config.json"
+            local_config_path = Path(temp_dir) / "config.local.json"
+            base_config_path.write_text(
+                json.dumps({"generation": {"codexModel": "gpt-base"}}),
+                encoding="utf-8",
+            )
+            local_config_path.write_text(
+                json.dumps(
+                    {
+                        "theme": "dark",
+                        "generation": {
+                            "codexModel": "gpt-local",
+                            "httpProxy": "http://old-proxy.test:8080",
+                            "noProxy": "localhost",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(generation_module, "ADDON_CONFIG_PATH", base_config_path),
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    local_config_path,
+                ),
+                patch.dict(os.environ, {"ANKI_AI_CONFIG_PATH": ""}, clear=False),
+            ):
+                result = update_generation_harness_config(
+                    {
+                        "agentProvider": "codex",
+                        "httpProxy": " http://new-proxy.test:8080 ",
+                        "httpsProxy": "http://secure-proxy.test:8443",
+                        "noProxy": "",
+                    }
+                )
+
+            persisted = json.loads(local_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["theme"], "dark")
+        self.assertEqual(
+            persisted["generation"],
+            {
+                "codexModel": "gpt-local",
+                "httpProxy": "http://new-proxy.test:8080",
+                "agentProvider": "codex",
+                "httpsProxy": "http://secure-proxy.test:8443",
+            },
+        )
+        self.assertEqual(
+            result,
+            {
+                "agentProvider": "codex",
+                "httpProxy": "http://new-proxy.test:8080",
+                "httpsProxy": "http://secure-proxy.test:8443",
+                "noProxy": "",
+            },
+        )
+
+    def test_update_generation_harness_config_rejects_invalid_agent_provider(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_config_path = Path(temp_dir) / "config.local.json"
+            with (
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    local_config_path,
+                ),
+                patch.dict(os.environ, {"ANKI_AI_CONFIG_PATH": ""}, clear=False),
+            ):
+                with self.assertRaises(GenerationServiceError) as error:
+                    update_generation_harness_config({"agentProvider": "other"})
+
+        self.assertEqual(error.exception.code, "invalid_agent_provider")
+        self.assertFalse(local_config_path.exists())
+
+    def test_codex_app_server_environment_uses_proxy_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "generation": {
+                            "codexHome": "/tmp/codex-home",
+                            "httpProxy": "http://proxy.test:8080",
+                            "httpsProxy": "http://secure-proxy.test:8443",
+                            "noProxy": "localhost,127.0.0.1",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(generation_module, "ADDON_CONFIG_PATH", config_path),
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    Path(temp_dir) / "missing.local.json",
+                ),
+                patch.dict(os.environ, {"ANKI_AI_CONFIG_PATH": ""}, clear=False),
+            ):
+                env = _codex_app_server_environment()
+
+        self.assertEqual(env["CODEX_HOME"], "/tmp/codex-home")
+        self.assertEqual(env["HTTP_PROXY"], "http://proxy.test:8080")
+        self.assertEqual(env["HTTPS_PROXY"], "http://secure-proxy.test:8443")
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1")
 
     def test_generate_cards_requires_cards_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
