@@ -7,7 +7,7 @@ name = "anki-ai-addon"
 version = "0.1.0"
 description = "Basic Anki add-on scaffold."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 dependencies = [
   "claude-agent-sdk",
   "jinja2",
@@ -15,6 +15,7 @@ dependencies = [
   "markdown-it-py",
   "mdit-py-plugins",
   "nh3",
+  "openai-codex@git+https://github.com/openai/codex.git#subdirectory=sdk/python",
 ]
 
 [project.optional-dependencies]

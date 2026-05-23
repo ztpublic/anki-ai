@@ -14,12 +14,15 @@ from unittest.mock import patch
 from anki_ai.file_conversion_service import FileConversionServiceError
 from anki_ai import generation_service as generation_module
 from anki_ai.generation_service import (
+    AgentCardGenerationService,
     RATE_LIMIT_ERROR_CODE,
     ClaudeCardGenerationService,
     GenerationLogEvent,
     GenerationServiceError,
     _generation_environment,
+    _run_agent_generation,
     _run_claude_generation_async,
+    _run_codex_generation_async,
 )
 
 
@@ -847,6 +850,336 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 )
 
         self.assertEqual(error.exception.code, "invalid_material_payload")
+
+    def test_agent_provider_defaults_to_claude(self) -> None:
+        with (
+            patch.object(generation_module, "_configured_agent_provider", return_value="claude"),
+            patch.object(
+                generation_module,
+                "_run_claude_generation",
+                return_value={"sessionId": "claude-session", "provider": "claude"},
+            ) as run_claude,
+            patch.object(generation_module, "_run_codex_generation") as run_codex,
+        ):
+            metadata = _run_agent_generation("Prompt", Path("/tmp/fake-workspace"))
+
+        self.assertEqual(metadata["provider"], "claude")
+        run_claude.assert_called_once()
+        run_codex.assert_not_called()
+
+    def test_agent_provider_can_select_codex(self) -> None:
+        with (
+            patch.object(generation_module, "_configured_agent_provider", return_value="codex"),
+            patch.object(generation_module, "_run_claude_generation") as run_claude,
+            patch.object(
+                generation_module,
+                "_run_codex_generation",
+                return_value={"sessionId": "codex-session", "provider": "codex"},
+            ) as run_codex,
+        ):
+            metadata = _run_agent_generation("Prompt", Path("/tmp/fake-workspace"))
+
+        self.assertEqual(metadata["provider"], "codex")
+        run_claude.assert_not_called()
+        run_codex.assert_called_once()
+
+    def test_agent_provider_request_override_skips_config_default(self) -> None:
+        with (
+            patch.object(generation_module, "_configured_agent_provider") as configured,
+            patch.object(generation_module, "_run_claude_generation") as run_claude,
+            patch.object(
+                generation_module,
+                "_run_codex_generation",
+                return_value={"sessionId": "codex-session", "provider": "codex"},
+            ) as run_codex,
+        ):
+            metadata = _run_agent_generation(
+                "Prompt",
+                Path("/tmp/fake-workspace"),
+                agent_provider="codex",
+            )
+
+        self.assertEqual(metadata["provider"], "codex")
+        configured.assert_not_called()
+        run_claude.assert_not_called()
+        run_codex.assert_called_once()
+
+    def test_agent_provider_rejects_invalid_config(self) -> None:
+        with patch.object(
+            generation_module,
+            "_generation_config",
+            return_value={"agentProvider": "other"},
+        ):
+            service = AgentCardGenerationService(
+                workspace_factory=lambda: Path(tempfile.mkdtemp()),
+            )
+            with self.assertRaises(GenerationServiceError) as error:
+                service.generate_cards(source_text="Important facts")
+
+        self.assertEqual(error.exception.code, "invalid_agent_provider")
+
+    def test_run_codex_generation_passes_workspace_model_and_streams_logs(self) -> None:
+        captured_client_kwargs: dict[str, object] = {}
+        captured_thread_kwargs: dict[str, object] = {}
+        captured_turn_kwargs: dict[str, object] = {}
+        login_keys: list[str] = []
+
+        class Status:
+            value = "completed"
+
+        class CompletedTurn:
+            status = Status()
+
+        class Payload:
+            def __init__(self, **kwargs: object) -> None:
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class Event:
+            def __init__(self, method: str, payload: object) -> None:
+                self.method = method
+                self.payload = payload
+
+        class ItemWrapper:
+            def __init__(self, root: object) -> None:
+                self.root = root
+
+        class ReasoningItem:
+            type = "reasoning"
+            summary = "I should create concise cards."
+
+        class CommandItem:
+            type = "commandExecution"
+            id = "cmd-1"
+            command = ["python", "-c", "print('write')"]
+
+        class FileChangeItem:
+            type = "fileChange"
+            id = "file-1"
+            status = "completed"
+            changes = [{"path": "cards.json", "kind": "add"}]
+
+        class FakeTurn:
+            id = "turn-1"
+
+            async def stream(self) -> object:
+                yield Event(
+                    "item/agentMessage/delta",
+                    Payload(delta="I will write cards."),
+                )
+                yield Event(
+                    "item/completed",
+                    Payload(item=ItemWrapper(ReasoningItem())),
+                )
+                yield {
+                    "method": "item/reasoning/summaryTextDelta",
+                    "params": {"delta": "Use only source-backed facts."},
+                }
+                yield Event(
+                    "item/completed",
+                    Payload(item=ItemWrapper(CommandItem())),
+                )
+                yield Event(
+                    "item/completed",
+                    Payload(item=ItemWrapper(FileChangeItem())),
+                )
+                yield Event("turn/completed", Payload(turn=CompletedTurn()))
+
+        class FakeThread:
+            id = "thread-1"
+
+            async def turn(self, prompt: str, **kwargs: object) -> FakeTurn:
+                self_prompt = prompt
+                _ = self_prompt
+                captured_turn_kwargs.update(kwargs)
+                return FakeTurn()
+
+        class FakeAsyncCodex:
+            def __init__(self, **kwargs: object) -> None:
+                captured_client_kwargs.update(kwargs)
+
+            async def __aenter__(self) -> "FakeAsyncCodex":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def login_api_key(self, api_key: str) -> None:
+                login_keys.append(api_key)
+
+            async def thread_start(self, **kwargs: object) -> FakeThread:
+                captured_thread_kwargs.update(kwargs)
+                return FakeThread()
+
+        fake_sdk = SimpleNamespace(AsyncCodex=FakeAsyncCodex)
+        logs: list[GenerationLogEvent] = []
+        workspace = Path("/tmp/fake-workspace")
+
+        with (
+            patch(
+                "anki_ai.generation_service.importlib.import_module",
+                return_value=fake_sdk,
+            ),
+            patch.object(generation_module, "_configured_codex_cli_path", return_value=None),
+            patch.object(generation_module, "_configured_codex_api_key", return_value="sk-test"),
+            patch.object(generation_module, "_configured_codex_model", return_value="gpt-test"),
+            patch.object(
+                generation_module,
+                "_configured_codex_reasoning_effort",
+                return_value="high",
+            ),
+            patch.object(generation_module, "_codex_approval_mode", return_value=None),
+        ):
+            metadata = asyncio.run(
+                _run_codex_generation_async(
+                    "Prompt",
+                    workspace,
+                    log_sink=logs.append,
+                )
+            )
+
+        self.assertEqual(captured_client_kwargs, {})
+        self.assertEqual(login_keys, ["sk-test"])
+        self.assertEqual(captured_thread_kwargs["cwd"], str(workspace))
+        self.assertEqual(captured_thread_kwargs["model"], "gpt-test")
+        self.assertEqual(
+            captured_thread_kwargs["config"],
+            {"model_reasoning_effort": "high"},
+        )
+        self.assertEqual(captured_turn_kwargs["effort"], "high")
+        self.assertEqual(metadata["provider"], "codex")
+        self.assertEqual(metadata["sessionId"], "thread-1")
+        self.assertEqual(metadata["stopReason"], "completed")
+        self.assertEqual(
+            log_messages(logs),
+            [
+                "LLM -> Agent: I will write cards.",
+                "LLM -> Agent reasoning: I should create concise cards.",
+                "LLM -> Agent reasoning: Use only source-backed facts.",
+                "LLM -> Agent tool request: commandExecution [\"python\", \"-c\", \"print('write')\"]",
+                'LLM -> Agent tool result fileChange: {"changes": [{"kind": "add", "path": "cards.json"}], "id": "file-1", "status": "completed"}',
+            ],
+        )
+        self.assertEqual(logs[0]["part"], {"type": "text", "text": "I will write cards."})
+        self.assertEqual(
+            logs[1]["part"],
+            {"type": "reasoning", "text": "I should create concise cards."},
+        )
+        self.assertEqual(logs[2]["part"], {"type": "reasoning", "text": "Use only source-backed facts."})
+        self.assertEqual(logs[3]["part"]["type"], "tool-call")
+        self.assertEqual(logs[4]["part"]["type"], "data")
+
+    def test_run_codex_generation_maps_failed_turn(self) -> None:
+        class Status:
+            value = "failed"
+
+        class FailedTurn:
+            status = Status()
+            error = {"message": "bad request"}
+
+        class Payload:
+            turn = FailedTurn()
+
+        class Event:
+            method = "turn/completed"
+            payload = Payload()
+
+        class FakeTurn:
+            id = "turn-1"
+
+            async def stream(self) -> object:
+                yield Event()
+
+        class FakeThread:
+            id = "thread-1"
+
+            async def turn(self, prompt: str, **kwargs: object) -> FakeTurn:
+                _ = prompt
+                _ = kwargs
+                return FakeTurn()
+
+        class FakeAsyncCodex:
+            async def __aenter__(self) -> "FakeAsyncCodex":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def thread_start(self, **kwargs: object) -> FakeThread:
+                _ = kwargs
+                return FakeThread()
+
+        fake_sdk = SimpleNamespace(AsyncCodex=FakeAsyncCodex)
+
+        with (
+            patch(
+                "anki_ai.generation_service.importlib.import_module",
+                return_value=fake_sdk,
+            ),
+            patch.object(generation_module, "_configured_codex_cli_path", return_value=None),
+            patch.object(generation_module, "_configured_codex_api_key", return_value=None),
+            patch.object(generation_module, "_codex_approval_mode", return_value=None),
+        ):
+            with self.assertRaises(GenerationServiceError) as error:
+                asyncio.run(
+                    _run_codex_generation_async("Prompt", Path("/tmp/fake-workspace"))
+                )
+
+        self.assertEqual(error.exception.code, "codex_generation_failed")
+
+    def test_run_codex_generation_maps_retryable_error(self) -> None:
+        class ServerBusyError(Exception):
+            pass
+
+        class FakeAsyncCodex:
+            async def __aenter__(self) -> "FakeAsyncCodex":
+                raise ServerBusyError("Server overloaded; retry later.")
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        fake_sdk = SimpleNamespace(
+            AsyncCodex=FakeAsyncCodex,
+            is_retryable_error=lambda error: isinstance(error, ServerBusyError),
+        )
+
+        with (
+            patch(
+                "anki_ai.generation_service.importlib.import_module",
+                return_value=fake_sdk,
+            ),
+            patch.object(generation_module, "_configured_codex_cli_path", return_value=None),
+        ):
+            with self.assertRaises(GenerationServiceError) as error:
+                asyncio.run(
+                    _run_codex_generation_async("Prompt", Path("/tmp/fake-workspace"))
+                )
+
+        self.assertEqual(error.exception.code, "codex_generation_rate_limited")
+
+    def test_run_codex_generation_maps_auth_missing(self) -> None:
+        class FakeAsyncCodex:
+            async def __aenter__(self) -> "FakeAsyncCodex":
+                raise RuntimeError("not authenticated")
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        fake_sdk = SimpleNamespace(AsyncCodex=FakeAsyncCodex)
+
+        with (
+            patch(
+                "anki_ai.generation_service.importlib.import_module",
+                return_value=fake_sdk,
+            ),
+            patch.object(generation_module, "_configured_codex_cli_path", return_value=None),
+        ):
+            with self.assertRaises(GenerationServiceError) as error:
+                asyncio.run(
+                    _run_codex_generation_async("Prompt", Path("/tmp/fake-workspace"))
+                )
+
+        self.assertEqual(error.exception.code, "codex_auth_missing")
 
     def test_run_claude_generation_surfaces_rate_limit_details(self) -> None:
         class FakeClaudeAgentOptions:

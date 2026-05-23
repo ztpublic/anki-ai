@@ -49,6 +49,7 @@ type Flashcard = {
 type CardTypeId = "basic" | "markdown";
 type CardCountMode = "less" | "normal" | "more";
 type CardCountStrategy = "fixed" | "smart";
+type AgentProvider = "claude" | "codex";
 
 type EditableCardField = "front" | "back";
 type CardContentFormat = "plain" | "markdown";
@@ -88,6 +89,7 @@ type GenerateCardsResponse = {
     workspacePath: string;
     sessionId?: string;
     stopReason?: string;
+    provider?: AgentProvider;
   };
 };
 
@@ -275,11 +277,16 @@ const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
 const DEFAULT_CARD_COUNT = 5;
 const DEFAULT_CARD_COUNT_STRATEGY: CardCountStrategy = "fixed";
 const DEFAULT_CARD_COUNT_MODE: CardCountMode = "normal";
+const DEFAULT_AGENT_PROVIDER: AgentProvider = "claude";
 
 const CARD_COUNT_MODE_OPTIONS: { id: CardCountMode; label: string }[] = [
   { id: "less", label: "Less" },
   { id: "normal", label: "Normal" },
   { id: "more", label: "More" },
+];
+const AGENT_PROVIDER_OPTIONS: { id: AgentProvider; label: string }[] = [
+  { id: "claude", label: "Claude" },
+  { id: "codex", label: "Codex" },
 ];
 
 const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
@@ -662,15 +669,17 @@ function stripRolePrefix(message: string, role: string | undefined): string {
 }
 
 function traceRoleFromEvent(role: string | undefined): AgentTraceMessage["role"] {
-  return role === "Claude Code -> LLM" ? "user" : "assistant";
+  return role === "Claude Code -> LLM" || role === "Agent -> LLM"
+    ? "user"
+    : "assistant";
 }
 
 function traceLabelFromEvent(role: string | undefined): string {
-  if (role === "Claude Code -> LLM") {
+  if (role === "Claude Code -> LLM" || role === "Agent -> LLM") {
     return "Agent -> LLM";
   }
 
-  if (role === "LLM -> Claude Code") {
+  if (role === "LLM -> Claude Code" || role === "LLM -> Agent") {
     return "LLM -> Agent";
   }
 
@@ -785,6 +794,68 @@ function traceFromGenerationLogEvent(
     },
     status: level === "error" ? "error" : "done",
     createdAt,
+  };
+}
+
+function generationFailureTraceFromJob(
+  event: GenerationJobEvent,
+): AgentTraceMessage {
+  const error = event.error;
+  const message = generationErrorFromJob(error);
+  return generationFailureTraceMessage({
+    message,
+    data: {
+      status: event.status,
+      code: error?.code,
+      message: error?.message ?? message,
+      details: error?.details,
+    },
+  });
+}
+
+function generationFailureTraceFromError(error: unknown): AgentTraceMessage {
+  const message = generationErrorMessage(error);
+  if (error instanceof BridgeTransportError) {
+    return generationFailureTraceMessage({
+      message,
+      data: {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      },
+    });
+  }
+
+  return generationFailureTraceMessage({
+    message,
+    data: {
+      message,
+      error: error instanceof Error ? error.message : error,
+    },
+  });
+}
+
+function generationFailureTraceMessage({
+  message,
+  data,
+}: {
+  message: string;
+  data: unknown;
+}): AgentTraceMessage {
+  return {
+    id: createCardId(),
+    role: "assistant",
+    kind: "agent_event",
+    label: "Generation failed",
+    level: "error",
+    source: "llm",
+    part: {
+      type: "data",
+      name: "generation-error",
+      data,
+    },
+    status: "error",
+    createdAt: Date.now(),
   };
 }
 
@@ -1080,6 +1151,8 @@ export function App() {
   const [cardCountMode, setCardCountMode] = useState<CardCountMode>(
     DEFAULT_CARD_COUNT_MODE,
   );
+  const [selectedAgentProvider, setSelectedAgentProvider] =
+    useState<AgentProvider>(DEFAULT_AGENT_PROVIDER);
   const [selectedCardTypeId, setSelectedCardTypeId] =
     useState<CardTypeId>(DEFAULT_CARD_TYPE_ID);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1302,6 +1375,16 @@ export function App() {
         if (event.status === "succeeded") {
           if (!event.result) {
             const message = "Generation finished without a result payload.";
+            setAgentTraceMessages((previousMessages) => [
+              ...previousMessages,
+              generationFailureTraceMessage({
+                message,
+                data: {
+                  status: event.status,
+                  message,
+                },
+              }),
+            ]);
             setGenerationError(message);
             setIsGenerating(false);
             setShowAgentMessages(true);
@@ -1339,6 +1422,10 @@ export function App() {
         }
 
         const message = generationErrorFromJob(event.error);
+        setAgentTraceMessages((previousMessages) => [
+          ...previousMessages,
+          generationFailureTraceFromJob(event),
+        ]);
         setGenerationError(message);
         setIsGenerating(false);
         setShowAgentMessages(true);
@@ -1533,6 +1620,7 @@ export function App() {
             instructions.trim().length > 0 ? instructions.trim() : undefined,
           ...(cardCountStrategy === "fixed" ? { cardCount } : { cardCountMode }),
           cardType: selectedCardTypeId,
+          agentProvider: selectedAgentProvider,
           materials,
         },
         { timeoutMs: 10000 },
@@ -1562,6 +1650,10 @@ export function App() {
       acceptsGenerationEventsRef.current = false;
       activeGenerationJobIdRef.current = null;
       stopGenerationRequestedRef.current = false;
+      setAgentTraceMessages((previousMessages) => [
+        ...previousMessages,
+        generationFailureTraceFromError(error),
+      ]);
       setGenerationError(generationErrorMessage(error));
       setIsGenerating(false);
       setShowAgentMessages(true);
@@ -1733,6 +1825,7 @@ export function App() {
           question: currentCard.front,
           answer: currentCard.back,
           explanation: currentCard.explanation ?? "",
+          agentProvider: selectedAgentProvider,
           ...(regenerationInstructions
             ? { instructions: regenerationInstructions }
             : {}),
@@ -1868,6 +1961,38 @@ export function App() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="block text-xs font-semibold text-zinc-600">
+                Agent
+              </span>
+              <div
+                className="grid grid-cols-2 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
+                role="radiogroup"
+                aria-label="Generation agent"
+              >
+                {AGENT_PROVIDER_OPTIONS.map((option) => {
+                  const isSelected = selectedAgentProvider === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => setSelectedAgentProvider(option.id)}
+                      className={`flex h-8 items-center justify-center gap-1.5 rounded text-xs font-semibold transition-colors ${
+                        isSelected
+                          ? "bg-white text-indigo-600 shadow-sm"
+                          : "text-zinc-600 hover:bg-white/70"
+                      }`}
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-1.5">

@@ -1,4 +1,4 @@
-"""Command-line entry point for Claude Code-backed card generation."""
+"""Command-line entry point for agent-backed card generation."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Protocol, TextIO
 from anki_ai.card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from anki_ai.card_generation_workflows import GeneratedCard
 from anki_ai.generation_service import (
-    ClaudeCardGenerationService,
+    AgentCardGenerationService,
     GenerationResult,
     GenerationServiceError,
     MaterialInput,
@@ -26,7 +26,7 @@ class CardGenerator(Protocol):
         *,
         source_text: str | None = None,
         materials: Sequence[MaterialInput] = (),
-        card_count: int = ClaudeCardGenerationService.DEFAULT_CARD_COUNT,
+        card_count: int = AgentCardGenerationService.DEFAULT_CARD_COUNT,
         card_type: str = DEFAULT_CARD_TYPE_ID,
     ) -> GenerationResult: ...
 
@@ -34,21 +34,21 @@ class CardGenerator(Protocol):
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate Anki cards from a local file using the Claude Code-backed "
-            "generation workflow."
+            "Generate Anki cards from a local file using the configured "
+            "agent-backed generation workflow."
         )
     )
     parser.add_argument(
         "material_path",
-        help="Path to a local file to copy into the Claude materials workspace.",
+        help="Path to a local file to copy into the agent materials workspace.",
     )
     parser.add_argument(
         "--card-count",
         type=int,
-        default=ClaudeCardGenerationService.DEFAULT_CARD_COUNT,
+        default=AgentCardGenerationService.DEFAULT_CARD_COUNT,
         help=(
-            "Approximate number of cards to request from Claude Code. "
-            f"Defaults to {ClaudeCardGenerationService.DEFAULT_CARD_COUNT}."
+            "Approximate number of cards to request from the generation agent. "
+            f"Defaults to {AgentCardGenerationService.DEFAULT_CARD_COUNT}."
         ),
     )
     parser.add_argument(
@@ -82,7 +82,7 @@ def main(
         error_stream.write(f"Failed to read material file: {error}\n")
         return 2
 
-    generator = ClaudeCardGenerationService() if service is None else service
+    generator = AgentCardGenerationService() if service is None else service
     material: MaterialInput = {
         "name": material_path.name,
         "contentBase64": base64.b64encode(material_bytes).decode("ascii"),

@@ -37,6 +37,7 @@ class FakeGenerationService:
         card_count: int = 5,
         card_count_mode: str | None = None,
         card_type: str = "basic",
+        agent_provider: str | None = None,
         instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
@@ -57,6 +58,7 @@ class FakeGenerationService:
                 "card_count": card_count,
                 "card_count_mode": card_count_mode,
                 "card_type": card_type,
+                "agent_provider": agent_provider,
                 "instructions": instructions,
             }
         )
@@ -78,6 +80,7 @@ class FakeGenerationService:
         question: str,
         answer: str,
         explanation: str | None = None,
+        agent_provider: str | None = None,
         instructions: str | None = None,
     ) -> JsonObject:
         self.calls.append(
@@ -86,6 +89,7 @@ class FakeGenerationService:
                 "question": question,
                 "answer": answer,
                 "explanation": explanation,
+                "agent_provider": agent_provider,
                 "instructions": instructions,
             }
         )
@@ -104,6 +108,7 @@ class RateLimitedGenerationService:
         card_count: int = 5,
         card_count_mode: str | None = None,
         card_type: str = "basic",
+        agent_provider: str | None = None,
         instructions: str | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
@@ -112,6 +117,7 @@ class RateLimitedGenerationService:
         _ = card_count
         _ = card_count_mode
         _ = card_type
+        _ = agent_provider
         _ = instructions
         _ = log_sink
         raise GenerationServiceError(
@@ -160,6 +166,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "card_count": 7,
                     "card_count_mode": None,
                     "card_type": "basic",
+                    "agent_provider": None,
                     "instructions": "Only generate yes/no questions.",
                 }
             ],
@@ -186,6 +193,44 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(service.calls[-1]["card_count"], 12)
         self.assertEqual(service.calls[-1]["card_count_mode"], "more")
+
+    def test_generate_cards_accepts_agent_provider(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {
+                    "sourceText": "Important facts",
+                    "agentProvider": "codex",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(service.calls[-1]["agent_provider"], "codex")
+
+    def test_generate_cards_rejects_invalid_agent_provider(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {"sourceText": "Important facts", "agentProvider": "other"},
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "invalid_params")
+        self.assertEqual(service.calls, [])
 
     def test_generate_cards_rejects_invalid_card_count_mode(self) -> None:
         service = FakeGenerationService()
@@ -327,6 +372,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "question": "What does retrieval practice strengthen?",
                     "answer": "Memory",
                     "explanation": "Practice strengthens recall routes.",
+                    "agent_provider": None,
                     "instructions": None,
                 }
             ],
@@ -359,6 +405,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                 "question": "What does retrieval practice strengthen?",
                 "answer": "Memory",
                 "explanation": "Practice strengthens recall routes.",
+                "agent_provider": None,
                 "instructions": "Add more explanation to the answer.",
             },
         )
@@ -437,6 +484,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "question": "What does retrieval practice strengthen?",
                     "answer": "Memory",
                     "explanation": "Practice strengthens recall routes.",
+                    "agent_provider": None,
                     "instructions": None,
                 }
             ],

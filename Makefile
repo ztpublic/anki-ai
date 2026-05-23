@@ -9,7 +9,7 @@ VENDOR_REQUEST := $(VENDOR_DIR)/.vendor-python.request
 FRONTEND_STAMP := $(ADDON_PACKAGE)/web/.frontend-build.stamp
 VENDOR_MARKITDOWN_EXTRAS ?= pdf,docx,pptx,xlsx,xls,youtube-transcription
 VENDOR_INCLUDE_CLAUDE_CLI ?= 0
-RUNTIME_DEPS := claude-agent-sdk jinja2 markitdown[$(VENDOR_MARKITDOWN_EXTRAS)] markdown-it-py mdit-py-plugins nh3
+RUNTIME_DEPS := claude-agent-sdk openai-codex@git+https://github.com/openai/codex.git\#subdirectory=sdk/python jinja2 markitdown[$(VENDOR_MARKITDOWN_EXTRAS)] markdown-it-py mdit-py-plugins nh3
 ANKI_PYTHON := $(HOME)/Library/Application Support/AnkiProgramFiles/.venv/bin/python
 VENDOR_PYTHON ?= python
 FRONTEND_SOURCES := $(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/index.html $(FRONTEND_DIR)/vite.config.ts $(FRONTEND_DIR)/package.json $(FRONTEND_DIR)/package-lock.json -type f 2>/dev/null)

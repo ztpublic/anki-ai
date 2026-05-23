@@ -1,4 +1,4 @@
-"""Claude Code-backed flashcard generation service."""
+"""Agent-backed flashcard generation service."""
 
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ class GenerationRunInfo(TypedDict, total=False):
     workspacePath: str
     sessionId: str
     stopReason: str
+    provider: str
 
 
 class GenerationResult(TypedDict):
@@ -62,9 +63,13 @@ class CardRegenerationResult(TypedDict):
     run: GenerationRunInfo
 
 
-class ClaudeRunMetadata(TypedDict, total=False):
+AgentProvider = Literal["claude", "codex"]
+
+
+class AgentRunMetadata(TypedDict, total=False):
     sessionId: str
     stopReason: str
+    provider: AgentProvider
 
 
 GenerationLogLevel = Literal["debug", "info", "warning", "error"]
@@ -103,10 +108,15 @@ class GenerationServiceError(Exception):
         self.details = details
 
 
-ClaudeRunner = Callable[[str, Path], ClaudeRunMetadata]
+ClaudeRunMetadata = AgentRunMetadata
+ClaudeRunner = Callable[[str, Path], AgentRunMetadata]
 GenerationLogSink = Callable[[GenerationLogEvent], None]
 WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
+CODEX_RATE_LIMIT_ERROR_CODE = "codex_generation_rate_limited"
+DEFAULT_AGENT_PROVIDER: AgentProvider = "claude"
+DEFAULT_CODEX_MODEL = "gpt-5.4"
+DEFAULT_CODEX_REASONING_EFFORT = "high"
 LOG_LEVEL_RANKS = {
     "trace": 0,
     "debug": 10,
@@ -155,14 +165,18 @@ GENERATION_ENV_CONFIG_KEYS = {
     "noProxy": "NO_PROXY",
 }
 GENERATION_ENV_KEYS = tuple(GENERATION_ENV_CONFIG_KEYS.values())
+CODEX_ENV_CONFIG_KEYS = {
+    "codexApiKey": "OPENAI_API_KEY",
+}
+CODEX_ENV_KEYS = tuple(CODEX_ENV_CONFIG_KEYS.values())
 
 
 def _default_workspace_factory() -> Path:
     return Path(tempfile.mkdtemp(prefix="anki-ai-generation-"))
 
 
-class ClaudeCardGenerationService:
-    """Prepare generation materials and collect Claude Code output."""
+class AgentCardGenerationService:
+    """Prepare generation materials and collect agent output."""
 
     DEFAULT_CARD_COUNT = 5
     MAX_CARD_COUNT = 200
@@ -191,6 +205,7 @@ class ClaudeCardGenerationService:
         card_count: int = DEFAULT_CARD_COUNT,
         card_count_mode: CardCountMode | None = None,
         card_type: str = DEFAULT_CARD_TYPE_ID,
+        agent_provider: AgentProvider | str | None = None,
         instructions: str | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
@@ -317,7 +332,12 @@ class ClaudeCardGenerationService:
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
         try:
-            run_metadata = self._run_claude(prompt, workspace_path, log_sink)
+            run_metadata = self._run_agent(
+                prompt,
+                workspace_path,
+                log_sink,
+                agent_provider=agent_provider,
+            )
         except GenerationServiceError as error:
             error.details = self._merge_details(
                 error.details,
@@ -367,12 +387,14 @@ class ClaudeCardGenerationService:
             run_info["sessionId"] = run_metadata["sessionId"]
         if "stopReason" in run_metadata:
             run_info["stopReason"] = run_metadata["stopReason"]
+        if "provider" in run_metadata:
+            run_info["provider"] = run_metadata["provider"]
 
         cards_path = workspace_path / "cards.json"
         if not cards_path.is_file():
             raise GenerationServiceError(
                 "missing_cards_output",
-                "Claude Code did not create cards.json in the workspace root.",
+                "The generation agent did not create cards.json in the workspace root.",
                 {"workspacePath": str(workspace_path)},
             )
 
@@ -405,6 +427,7 @@ class ClaudeCardGenerationService:
         question: str,
         answer: str,
         explanation: str | None = None,
+        agent_provider: AgentProvider | str | None = None,
         instructions: str | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> CardRegenerationResult:
@@ -413,6 +436,7 @@ class ClaudeCardGenerationService:
             question=question,
             answer=answer,
             explanation=explanation,
+            agent_provider=agent_provider,
             instructions=instructions,
             log_sink=log_sink,
         )
@@ -424,6 +448,7 @@ class ClaudeCardGenerationService:
         question: str,
         answer: str,
         explanation: str | None,
+        agent_provider: AgentProvider | str | None,
         instructions: str | None,
         log_sink: GenerationLogSink | None,
     ) -> CardRegenerationResult:
@@ -463,7 +488,12 @@ class ClaudeCardGenerationService:
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
         try:
-            run_metadata = self._run_claude(prompt, workspace_path, log_sink)
+            run_metadata = self._run_agent(
+                prompt,
+                workspace_path,
+                log_sink,
+                agent_provider=agent_provider,
+            )
         except GenerationServiceError as error:
             error.details = self._merge_details(
                 error.details,
@@ -513,12 +543,14 @@ class ClaudeCardGenerationService:
             run_info["sessionId"] = run_metadata["sessionId"]
         if "stopReason" in run_metadata:
             run_info["stopReason"] = run_metadata["stopReason"]
+        if "provider" in run_metadata:
+            run_info["provider"] = run_metadata["provider"]
 
         output_path = workspace_path / workflow.output_filename
         if not output_path.is_file():
             raise GenerationServiceError(
                 "missing_regenerated_card_output",
-                f"Claude Code did not create {workflow.output_filename} in the workspace root.",
+                f"The generation agent did not create {workflow.output_filename} in the workspace root.",
                 {"workspacePath": str(workspace_path)},
             )
 
@@ -692,20 +724,58 @@ class ClaudeCardGenerationService:
     def _matches_error_name(error: Exception, *names: str) -> bool:
         return any(base.__name__ in names for base in type(error).__mro__)
 
-    def _run_claude(
+    def _run_agent(
         self,
         prompt: str,
         workspace_path: Path,
         log_sink: GenerationLogSink | None,
-    ) -> ClaudeRunMetadata:
+        *,
+        agent_provider: AgentProvider | str | None = None,
+    ) -> AgentRunMetadata:
         if self._runner is not None:
             return self._runner(prompt, workspace_path)
 
+        return _run_agent_generation(
+            prompt,
+            workspace_path,
+            agent_provider=agent_provider,
+            log_sink=log_sink,
+        )
+
+
+class ClaudeCardGenerationService(AgentCardGenerationService):
+    """Backward-compatible name for the agent-backed generation service."""
+
+
+def _run_agent_generation(
+    prompt: str,
+    workspace_path: Path,
+    *,
+    agent_provider: AgentProvider | str | None = None,
+    log_sink: GenerationLogSink | None = None,
+) -> AgentRunMetadata:
+    provider = (
+        _configured_agent_provider()
+        if agent_provider is None
+        else _normalize_agent_provider(agent_provider)
+    )
+    if provider == "claude":
         return _run_claude_generation(
             prompt,
             workspace_path,
             log_sink=log_sink,
         )
+    if provider == "codex":
+        return _run_codex_generation(
+            prompt,
+            workspace_path,
+            log_sink=log_sink,
+        )
+    raise GenerationServiceError(
+        "invalid_agent_provider",
+        "generation.agentProvider must be one of: claude, codex.",
+        {"agentProvider": provider},
+    )
 
 
 def _run_claude_generation(
@@ -713,7 +783,7 @@ def _run_claude_generation(
     workspace_path: Path,
     *,
     log_sink: GenerationLogSink | None = None,
-) -> ClaudeRunMetadata:
+) -> AgentRunMetadata:
     return asyncio.run(
         _run_claude_generation_async(
             prompt,
@@ -728,7 +798,7 @@ async def _run_claude_generation_async(
     workspace_path: Path,
     *,
     log_sink: GenerationLogSink | None = None,
-) -> ClaudeRunMetadata:
+) -> AgentRunMetadata:
     _bootstrap_generation_runtime()
     sdk = importlib.import_module("claude_agent_sdk")
 
@@ -798,12 +868,290 @@ async def _run_claude_generation_async(
             default_message="Claude Code reported an error while generating cards.",
         )
 
-    metadata: ClaudeRunMetadata = {}
+    metadata: AgentRunMetadata = {"provider": "claude"}
     if result_message.session_id:
         metadata["sessionId"] = result_message.session_id
     if result_message.stop_reason:
         metadata["stopReason"] = result_message.stop_reason
     return metadata
+
+
+def _run_codex_generation(
+    prompt: str,
+    workspace_path: Path,
+    *,
+    log_sink: GenerationLogSink | None = None,
+) -> AgentRunMetadata:
+    return asyncio.run(
+        _run_codex_generation_async(
+            prompt,
+            workspace_path,
+            log_sink=log_sink,
+        )
+    )
+
+
+async def _run_codex_generation_async(
+    prompt: str,
+    workspace_path: Path,
+    *,
+    log_sink: GenerationLogSink | None = None,
+) -> AgentRunMetadata:
+    _bootstrap_generation_runtime()
+    sdk = importlib.import_module("openai_codex")
+
+    try:
+        client_kwargs: dict[str, Any] = {}
+        codex_bin = _configured_codex_cli_path()
+        app_server_config = getattr(sdk, "AppServerConfig", None)
+        if codex_bin and app_server_config is not None:
+            client_kwargs["config"] = app_server_config(codex_bin=codex_bin)
+
+        async with sdk.AsyncCodex(**client_kwargs) as codex:
+            api_key = _configured_codex_api_key()
+            if api_key:
+                await codex.login_api_key(api_key)
+
+            model = _configured_codex_model()
+            effort = _configured_codex_reasoning_effort()
+            thread_kwargs: dict[str, Any] = {
+                "cwd": str(workspace_path),
+                "ephemeral": True,
+                "model": model,
+                "config": {"model_reasoning_effort": effort},
+            }
+            approval_mode = _codex_approval_mode(sdk)
+            if approval_mode is not None:
+                thread_kwargs["approval_mode"] = approval_mode
+
+            thread = await codex.thread_start(**thread_kwargs)
+            turn = await thread.turn(prompt, effort=effort)
+            completed_turn: Any | None = None
+            async for event in turn.stream():
+                _emit_codex_event_logs(log_sink, event)
+                if _value_field(event, "method") == "turn/completed":
+                    completed_turn = _value_field(_codex_event_params(event), "turn")
+
+            status = _codex_turn_status(completed_turn)
+            if status in {"failed", "interrupted"}:
+                details = _codex_failure_details(completed_turn)
+                raise _codex_failure_error(
+                    details=details,
+                    auth_missing=_looks_auth_missing(details),
+                    rate_limited=_looks_rate_limited(details),
+                    default_message="Codex generation failed.",
+                )
+
+            metadata: AgentRunMetadata = {"provider": "codex"}
+            thread_id = _value_field(thread, "id")
+            turn_id = _value_field(turn, "id")
+            if isinstance(thread_id, str) and thread_id:
+                metadata["sessionId"] = thread_id
+            elif isinstance(turn_id, str) and turn_id:
+                metadata["sessionId"] = turn_id
+            if status:
+                metadata["stopReason"] = status
+            return metadata
+    except GenerationServiceError:
+        raise
+    except Exception as error:
+        details = _codex_failure_details(error=error)
+        is_retryable = getattr(sdk, "is_retryable_error", None)
+        raise _codex_failure_error(
+            details=details,
+            auth_missing=_looks_auth_missing(error, details),
+            rate_limited=(
+                _looks_rate_limited(error, details)
+                or (callable(is_retryable) and bool(is_retryable(error)))
+            ),
+            default_message="Codex generation failed.",
+        ) from error
+
+
+def _emit_codex_event_logs(
+    log_sink: GenerationLogSink | None,
+    event: Any,
+) -> None:
+    if log_sink is None:
+        return
+
+    method = _value_field(event, "method")
+    payload = _codex_event_params(event)
+    if method == "item/agentMessage/delta":
+        delta = _value_field(payload, "delta")
+        if isinstance(delta, str) and delta.strip():
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Agent: {delta.strip()}",
+                source="llm",
+                role="LLM -> Agent",
+                part={"type": "text", "text": delta.strip()},
+            )
+        return
+
+    if method in {
+        "item/reasoning/summaryTextDelta",
+        "item/reasoning/textDelta",
+    }:
+        delta = _value_field(payload, "delta")
+        if isinstance(delta, str) and delta.strip():
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Agent reasoning: {delta.strip()}",
+                source="llm",
+                role="LLM -> Agent",
+                part={"type": "reasoning", "text": delta.strip()},
+            )
+        return
+
+    if method in {
+        "item/commandExecution/outputDelta",
+        "item/fileChange/outputDelta",
+    }:
+        delta = _value_field(payload, "delta")
+        if isinstance(delta, str) and delta.strip():
+            name = "commandExecution" if "commandExecution" in method else "fileChange"
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Agent tool result {name}: {delta.strip()}",
+                source="llm",
+                role="LLM -> Agent",
+                part={
+                    "type": "data",
+                    "name": name,
+                    "data": {"content": delta.strip()},
+                },
+            )
+        return
+
+    if method not in {"item/started", "item/completed"}:
+        return
+
+    item = _codex_payload_item(payload)
+    item_type = _codex_item_type(item)
+    if item_type == "agentMessage":
+        text = _value_field(item, "text")
+        if isinstance(text, str) and text.strip():
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Agent: {text.strip()}",
+                source="llm",
+                role="LLM -> Agent",
+                part={"type": "text", "text": text.strip()},
+            )
+        return
+
+    if item_type == "reasoning":
+        text = _codex_reasoning_text(item)
+        if text:
+            _emit_generation_log(
+                log_sink,
+                f"LLM -> Agent reasoning: {text}",
+                source="llm",
+                role="LLM -> Agent",
+                part={"type": "reasoning", "text": text},
+            )
+        return
+
+    if item_type == "commandExecution":
+        command = _value_field(item, "command")
+        command_text = _compact_json(command) if command is not None else ""
+        item_id = _value_field(item, "id")
+        part: dict[str, Any] = {
+            "type": "tool-call",
+            "toolName": "commandExecution",
+            "argsText": command_text,
+        }
+        if isinstance(item_id, str) and item_id:
+            part["toolCallId"] = item_id
+        _emit_generation_log(
+            log_sink,
+            f"LLM -> Agent tool request: commandExecution {command_text}".rstrip(),
+            source="llm",
+            role="LLM -> Agent",
+            part=part,
+        )
+        return
+
+    if item_type == "fileChange":
+        data = _codex_item_data(item)
+        _emit_generation_log(
+            log_sink,
+            f"LLM -> Agent tool result fileChange: {_compact_json(data)}",
+            source="llm",
+            role="LLM -> Agent",
+            part={"type": "data", "name": "fileChange", "data": data},
+        )
+
+
+def _value_field(value: Any, field: str, *, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(field, default)
+    return getattr(value, field, default)
+
+
+def _codex_event_params(event: Any) -> Any:
+    return _value_field(event, "params", default=_value_field(event, "payload"))
+
+
+def _codex_payload_item(payload: Any) -> Any:
+    item = _value_field(payload, "item")
+    return _value_field(item, "root", default=item)
+
+
+def _codex_item_type(item: Any) -> str | None:
+    value = _value_field(item, "type")
+    if isinstance(value, str):
+        return value
+    value = _value_field(value, "value")
+    return value if isinstance(value, str) else None
+
+
+def _codex_reasoning_text(item: Any) -> str | None:
+    for attr in ("summary", "text", "content"):
+        value = _value_field(item, attr)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list):
+            text = " ".join(str(part).strip() for part in value if str(part).strip())
+            if text:
+                return text
+    return None
+
+
+def _codex_item_data(item: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for attr in ("id", "status", "changes", "command", "cwd", "exitCode", "durationMs"):
+        value = _value_field(item, attr)
+        if value is not None:
+            data[attr] = value
+    return data
+
+
+def _codex_turn_status(turn: Any) -> str | None:
+    if turn is None:
+        return None
+    status = _value_field(turn, "status")
+    value = _value_field(status, "value", default=status)
+    return value if isinstance(value, str) else None
+
+
+def _codex_failure_details(
+    turn: Any | None = None,
+    *,
+    error: Exception | None = None,
+) -> dict[str, Any] | None:
+    details: dict[str, Any] = {}
+    if turn is not None:
+        details["status"] = _codex_turn_status(turn)
+        turn_error = _value_field(turn, "error")
+        if turn_error is not None:
+            details["turnError"] = _serialize_detail_value(turn_error)
+    if error is not None:
+        details["errorType"] = type(error).__name__
+        details["error"] = str(error)
+    details["runtime"] = _runtime_diagnostics()
+    return details or None
 
 
 def _emit_generation_log(
@@ -1090,18 +1438,22 @@ def _runtime_diagnostics() -> dict[str, Any]:
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "NO_PROXY",
+        "OPENAI_API_KEY",
     )
     return {
         "pythonExecutable": sys.executable,
         "processCwd": os.getcwd(),
         "claudePath": shutil.which("claude"),
         "configuredClaudePath": str(_configured_claude_cli_path() or ""),
+        "codexPath": shutil.which("codex"),
+        "configuredCodexPath": str(_configured_codex_cli_path() or ""),
         "nodePath": shutil.which("node"),
         "pathEntries": [entry for entry in path_value.split(os.pathsep) if entry],
         "envKeysPresent": [
             key for key in env_keys_to_report if os.environ.get(key)
         ],
         "configuredEnvKeysPresent": sorted(_generation_environment().keys()),
+        "configuredCodexEnvKeysPresent": sorted(_codex_environment().keys()),
     }
 
 
@@ -1137,6 +1489,7 @@ def _cli_path_candidates() -> list[Path]:
     return [
         home / ".local" / "bin",
         home / ".claude" / "local",
+        home / ".codex" / "bin",
         home / ".npm-global" / "bin",
         home / ".yarn" / "bin",
         home / ".cargo" / "bin",
@@ -1191,10 +1544,91 @@ def _generation_environment() -> dict[str, str]:
     return env
 
 
+def _codex_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in CODEX_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+
+    shell_env = _load_shell_codex_environment()
+    for key, value in shell_env.items():
+        if key not in env and value:
+            env[key] = value
+
+    config = _generation_config()
+    for config_key, env_key in CODEX_ENV_CONFIG_KEYS.items():
+        value = config.get(config_key)
+        if isinstance(value, str) and value.strip():
+            env[env_key] = value.strip()
+    return env
+
+
+def _configured_agent_provider() -> AgentProvider:
+    return _normalize_agent_provider(_generation_config().get("agentProvider"))
+
+
+def _normalize_agent_provider(value: AgentProvider | str | None) -> AgentProvider:
+    configured = DEFAULT_AGENT_PROVIDER if value is None else value
+    if not isinstance(configured, str) or not configured.strip():
+        return DEFAULT_AGENT_PROVIDER
+    provider = configured.strip().lower()
+    if provider not in ("claude", "codex"):
+        raise GenerationServiceError(
+            "invalid_agent_provider",
+            "generation.agentProvider must be one of: claude, codex.",
+            {"agentProvider": configured},
+        )
+    return cast(AgentProvider, provider)
+
+
+def _configured_codex_api_key() -> str | None:
+    env = _codex_environment()
+    value = env.get("OPENAI_API_KEY")
+    return value if value else None
+
+
+def _configured_codex_model() -> str:
+    configured = _generation_config().get("codexModel")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return DEFAULT_CODEX_MODEL
+
+
+def _configured_codex_reasoning_effort() -> str:
+    configured = _generation_config().get("codexReasoningEffort")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return DEFAULT_CODEX_REASONING_EFFORT
+
+
+def _configured_codex_cli_path() -> str | None:
+    configured = _generation_config().get("codexCliPath")
+    if isinstance(configured, str) and configured.strip():
+        return str(Path(configured).expanduser())
+
+    discovered = shutil.which("codex")
+    return discovered if discovered else None
+
+
+def _codex_approval_mode(sdk: Any) -> Any | None:
+    approval_mode = getattr(sdk, "ApprovalMode", None)
+    if approval_mode is None:
+        return None
+    return getattr(approval_mode, "never", None)
+
+
 def _load_shell_generation_environment() -> dict[str, str]:
     env: dict[str, str] = {}
     for path in _shell_env_file_candidates():
         env.update(_read_shell_generation_environment(path))
+    return env
+
+
+def _load_shell_codex_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for path in _shell_env_file_candidates():
+        env.update(_read_shell_environment(path, allowed_keys=set(CODEX_ENV_KEYS)))
     return env
 
 
@@ -1211,13 +1645,16 @@ def _shell_env_file_candidates() -> list[Path]:
 
 
 def _read_shell_generation_environment(path: Path) -> dict[str, str]:
+    return _read_shell_environment(path, allowed_keys=set(GENERATION_ENV_KEYS))
+
+
+def _read_shell_environment(path: Path, *, allowed_keys: set[str]) -> dict[str, str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return {}
 
     env: dict[str, str] = {}
-    allowed_keys = set(GENERATION_ENV_KEYS)
     for line in lines:
         parsed = _parse_shell_env_assignment(line)
         if parsed is None:
@@ -1362,6 +1799,37 @@ def _claude_failure_error(
     )
 
 
+def _codex_failure_error(
+    *,
+    details: dict[str, Any] | None,
+    auth_missing: bool = False,
+    rate_limited: bool,
+    default_message: str,
+) -> GenerationServiceError:
+    if auth_missing:
+        return GenerationServiceError(
+            "codex_auth_missing",
+            (
+                "Codex authentication is not configured for Anki. "
+                "Set generation.codexApiKey in the add-on config, define "
+                "OPENAI_API_KEY in the launch environment, or complete Codex login "
+                "outside Anki so the Codex SDK can reuse that auth state."
+            ),
+            details,
+        )
+    if rate_limited:
+        return GenerationServiceError(
+            CODEX_RATE_LIMIT_ERROR_CODE,
+            "Codex generation was rate limited by the configured API provider.",
+            details,
+        )
+    return GenerationServiceError(
+        "codex_generation_failed",
+        default_message,
+        details,
+    )
+
+
 def _looks_rate_limited(*values: Any) -> bool:
     for value in values:
         if value is None:
@@ -1388,6 +1856,10 @@ def _looks_auth_missing(*values: Any) -> bool:
             or "auth error: no api key available" in lowered
             or "expected either apikey or authtoken" in lowered
             or "no api key available" in lowered
+            or "not authenticated" in lowered
+            or "not logged in" in lowered
+            or "unauthorized" in lowered
+            or "401" in lowered
         ):
             return True
     return False

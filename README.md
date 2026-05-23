@@ -6,7 +6,7 @@ frontend build pipeline, Anki dialog integration, and a typed JSON bridge betwee
 the web UI and Python backend.
 
 Reviewed cards can be inserted into the active Anki collection through the
-webview bridge. Card generation now runs through a Claude Code task in a
+webview bridge. Card generation now runs through a configured agent task in a
 temporary workspace that produces a `cards.json` file for the review UI.
 
 ## Current State
@@ -25,7 +25,7 @@ temporary workspace that produces a `cards.json` file for the review UI.
   markdown, including `pdf`, `docx`, `pptx`, `xlsx`, `xls`, `ipynb`, `epub`,
   `csv`, `zip`, `txt`, `md`, `json`, `html`, `xml`, `rss`, `atom`, `msg`,
   `jpg`, `jpeg`, `png`, `mp3`, `mp4`, `m4a`, and `wav`.
-- Provides a Claude Code-backed generation workflow that prepares a temporary
+- Provides an agent-backed generation workflow that prepares a temporary
   workspace, converts non-markdown attachments into markdown materials, and
   validates the generated `cards.json` output.
 - Installs a `window.AnkiAI` frontend bridge with request, notification, and
@@ -109,9 +109,9 @@ make vendor-python
 
 This is required because Anki runs add-ons with its own Python environment and
 does not install this repository's `pyproject.toml` dependencies automatically.
-The generation backend loads `claude-agent-sdk` and the configured MarkItDown
-extras from `anki_ai/vendor/` when present, then falls back to the repo `.venv`
-for local symlink development.
+The generation backend loads `claude-agent-sdk`, `openai-codex`, and the
+configured MarkItDown extras from `anki_ai/vendor/` when present, then falls
+back to the repo `.venv` for local symlink development.
 
 `make build` is incremental. It only rebuilds frontend assets when frontend
 inputs change, only refreshes `anki_ai/vendor/` when the vendored dependency
@@ -123,33 +123,43 @@ To keep the add-on archive smaller, the default vendored dependency set avoids
 `markitdown[all]`, prunes dependency test and console-script payloads, and does
 not package the bundled Claude Code CLI from `claude-agent-sdk`. Install Claude
 Code separately or set `generation.claudeCliPath` if Anki cannot discover it.
-For a self-contained archive with the SDK's bundled Claude CLI, run:
+The Codex SDK is installed from the `openai/codex` Python SDK subdirectory and
+brings its pinned `openai-codex-cli-bin` runtime dependency. For a self-contained
+archive with the Claude SDK's bundled Claude CLI, run:
 
 ```shell
 make build VENDOR_INCLUDE_CLAUDE_CLI=1
 ```
 
-Claude Code generation must also have Anthropic-compatible authentication
-available to the Anki process. Anki launched from Finder or Spotlight usually
+Claude generation must have Anthropic-compatible authentication available to the
+Anki process. Codex generation uses `OPENAI_API_KEY`, `generation.codexApiKey`,
+or an existing Codex login state. Anki launched from Finder or Spotlight usually
 does not inherit shell environment variables, so a terminal setup that works for
-`claude` may still be invisible to the add-on. For custom providers, set the
-values under `generation` in Anki's add-on config or in an ignored
+`claude` or `codex` may still be invisible to the add-on. Set the values under
+`generation` in Anki's add-on config or in an ignored
 `anki_ai/config.local.json`, for example:
 
 ```json
 {
   "generation": {
+    "agentProvider": "codex",
     "anthropicAuthToken": "",
     "anthropicBaseUrl": "https://api.example.com",
     "anthropicModel": "provider-model-name",
-    "claudeCliPath": "/Users/you/.local/bin/claude"
+    "claudeCliPath": "/Users/you/.local/bin/claude",
+    "codexApiKey": "",
+    "codexModel": "gpt-5.4",
+    "codexReasoningEffort": "high",
+    "codexCliPath": "/Users/you/.local/bin/codex"
   }
 }
 ```
 
 `anthropicAuthToken` maps to `ANTHROPIC_AUTH_TOKEN`; alternatively use
-`anthropicApiKey` for `ANTHROPIC_API_KEY`. Leave secrets out of commits and set
-them only in your local add-on configuration.
+`anthropicApiKey` for `ANTHROPIC_API_KEY`. `codexApiKey` maps to
+`OPENAI_API_KEY`; leave it empty when you want the Codex SDK to reuse an
+existing login. Leave secrets out of commits and set them only in your local
+add-on configuration.
 
 As a convenience for local development, the add-on also reads simple
 `export KEY=value` or `KEY=value` assignments for the same keys from common shell
@@ -189,16 +199,16 @@ anki.cards.moveToDeck
 ```
 
 The React UI currently calls `anki.decks.list` to populate the target deck
-selector, `anki.generation.startGenerateCards` to run Claude Code card
-generation with live log events, and `anki.cards.addToDeck` to persist reviewed
+selector, `anki.generation.startGenerateCards` to run agent card generation with
+live log events, and `anki.cards.addToDeck` to persist reviewed
 generated cards.
 
 ## Card Generation Format
 
 Card generation runs in a temporary workspace. The backend prepares a
 `materials/` directory, copies markdown attachments into the same directory,
-converts non-markdown attachments to markdown files in that directory, runs
-Claude Code with that workspace as the current directory, and expects a single
+converts non-markdown attachments to markdown files in that directory, runs the
+configured agent with that workspace as the current directory, and expects a single
 `cards.json` file in the workspace root.
 The app's instruction input is injected into the prompt as generation guidance;
 it is not written to `materials/` and is not treated as source material.
@@ -229,7 +239,7 @@ Bridge request:
 }
 ```
 
-Claude Code output contract:
+Agent output contract:
 
 ```json
 [
@@ -276,13 +286,13 @@ Standalone generation script:
 python scripts/generate_cards.py /path/to/material.pdf --card-count 10
 ```
 
-The script accepts one local file path, copies it into the same Claude Code
+The script accepts one local file path, copies it into the same agent
 `materials/` workspace used by the add-on, and writes a JSON array of
 `{"Front", "Back"}` card objects to `/path/to/material.pdf.json`.
 
 ## Card Answer Regeneration
 
-The backend supports Claude Code workflows for improving an existing card from
+The backend supports agent workflows for improving an existing card from
 review flows. These do not create new cards.
 
 Transport methods:
@@ -300,7 +310,7 @@ Request params:
 }
 ```
 
-Claude Code receives this as `card.json` in the workspace root and must write
+The configured agent receives this as `card.json` in the workspace root and must write
 `regenerated_card.json`. The answer-only workflow writes:
 
 ```json
@@ -453,14 +463,14 @@ extra `anki_ai/` parent directory.
 
 The add-on includes Anki configuration files:
 
-- `anki_ai/config.json` currently contains `{"enabled": true}`.
-- `anki_ai/config.md` documents that setting.
+- `anki_ai/config.json` contains `enabled` plus generation provider defaults.
+- `anki_ai/config.md` documents those settings.
 
 The setting is present for future behavior gates. The current add-on still
 registers its menu item regardless of this value.
 
 ## Known Gaps
 
-- The per-card-type Claude generation prompt templates will likely need iteration.
-- Uploaded files are passed to Claude Code as workspace materials without any local preprocessing.
+- The per-card-type agent generation prompt templates will likely need iteration.
+- Uploaded files are passed to the configured agent as workspace materials without any local preprocessing.
 - Generation runs synchronously through the current bridge request path, so there is no cancel/resume flow yet.

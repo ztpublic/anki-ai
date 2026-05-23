@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from .generation_service import ClaudeCardGenerationService, GenerationServiceError
+from .generation_service import AgentCardGenerationService, GenerationServiceError
 
 REVIEWER_MESSAGE_PREFIX = "anki-ai-reviewer:"
 REVIEWER_ENTRY_MANIFEST_KEY = "src/reviewer.tsx"
@@ -234,7 +234,7 @@ def _start_regeneration(reviewer: object, payload: dict[str, Any]) -> None:
 
     def run() -> None:
         try:
-            service = ClaudeCardGenerationService()
+            service = AgentCardGenerationService()
             result = service.regenerate_answer(
                 question=card_text["question"] or "",
                 answer=card_text["answer"] or "",

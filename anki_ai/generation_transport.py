@@ -1,4 +1,4 @@
-"""Transport handlers for Claude Code-backed card generation."""
+"""Transport handlers for agent-backed card generation."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from typing import Any, Union, cast
 from .card_generation_workflows import CardCountMode
 from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
 from .generation_service import (
+    AgentCardGenerationService,
+    AgentProvider,
     CardRegenerationResult,
-    ClaudeCardGenerationService,
     GenerationLogEvent,
     GenerationResult,
     GenerationServiceError,
@@ -32,7 +33,7 @@ GenerationEventEmitter = Callable[[str, JsonObject], None]
 
 def register_generation_transport_handlers(
     router: TransportRouter,
-    service: ClaudeCardGenerationService | None = None,
+    service: AgentCardGenerationService | None = None,
     *,
     background_runner: GenerationBackgroundRunner | None = None,
     event_emitter: GenerationEventEmitter | None = None,
@@ -54,16 +55,16 @@ def register_generation_transport_handlers(
 
 
 class GenerationTransportHandlers:
-    """Bridge-facing wrappers around ClaudeCardGenerationService."""
+    """Bridge-facing wrappers around AgentCardGenerationService."""
 
     def __init__(
         self,
-        service: ClaudeCardGenerationService | None = None,
+        service: AgentCardGenerationService | None = None,
         *,
         background_runner: GenerationBackgroundRunner | None = None,
         event_emitter: GenerationEventEmitter | None = None,
     ) -> None:
-        self._service = ClaudeCardGenerationService() if service is None else service
+        self._service = AgentCardGenerationService() if service is None else service
         self._background_runner = (
             _default_background_runner
             if background_runner is None
@@ -78,6 +79,7 @@ class GenerationTransportHandlers:
         source_text, materials, card_count, card_count_mode, card_type, instructions = (
             self._generation_inputs(params)
         )
+        agent_provider = _optional_agent_provider(params, "agentProvider")
 
         return self._run(
             lambda service: service.generate_cards(
@@ -86,6 +88,7 @@ class GenerationTransportHandlers:
                 card_count=card_count,
                 card_count_mode=card_count_mode,
                 card_type=card_type,
+                agent_provider=agent_provider,
                 instructions=instructions,
             )
         )
@@ -94,12 +97,14 @@ class GenerationTransportHandlers:
         question, answer, explanation, instructions = self._card_regeneration_inputs(
             params
         )
+        agent_provider = _optional_agent_provider(params, "agentProvider")
 
         return self._run(
             lambda service: service.regenerate_answer(
                 question=question,
                 answer=answer,
                 explanation=explanation,
+                agent_provider=agent_provider,
                 instructions=instructions,
             )
         )
@@ -115,6 +120,7 @@ class GenerationTransportHandlers:
         question, answer, explanation, instructions = self._card_regeneration_inputs(
             params
         )
+        agent_provider = _optional_agent_provider(params, "agentProvider")
         job_id = str(uuid.uuid4())
 
         def emit_job(payload: JsonObject) -> None:
@@ -130,13 +136,14 @@ class GenerationTransportHandlers:
             emit_job(
                 {
                     "status": "started",
-                    "message": "Started Claude Code answer regeneration.",
+                    "message": "Started agent answer regeneration.",
                 }
             )
             return self._service.regenerate_answer(
                 question=question,
                 answer=answer,
                 explanation=explanation,
+                agent_provider=agent_provider,
                 instructions=instructions,
             )
 
@@ -171,6 +178,7 @@ class GenerationTransportHandlers:
         source_text, materials, card_count, card_count_mode, card_type, instructions = (
             self._generation_inputs(params)
         )
+        agent_provider = _optional_agent_provider(params, "agentProvider")
         job_id = str(uuid.uuid4())
 
         with self._jobs_lock:
@@ -218,7 +226,7 @@ class GenerationTransportHandlers:
             emit_job(
                 {
                     "status": "started",
-                    "message": "Started Claude Code card generation.",
+                    "message": "Started agent card generation.",
                 }
             )
             result = self._service.generate_cards(
@@ -227,6 +235,7 @@ class GenerationTransportHandlers:
                 card_count=card_count,
                 card_count_mode=card_count_mode,
                 card_type=card_type,
+                agent_provider=agent_provider,
                 instructions=instructions,
                 log_sink=log_sink,
             )
@@ -307,9 +316,9 @@ class GenerationTransportHandlers:
         card_count = _optional_int(
             params,
             "cardCount",
-            ClaudeCardGenerationService.DEFAULT_CARD_COUNT,
+            AgentCardGenerationService.DEFAULT_CARD_COUNT,
             minimum=1,
-            maximum=ClaudeCardGenerationService.MAX_CARD_COUNT,
+            maximum=AgentCardGenerationService.MAX_CARD_COUNT,
         )
         card_count_mode = _optional_card_count_mode(params, "cardCountMode")
         card_type = _optional_card_type(params, "cardType")
@@ -346,7 +355,7 @@ class GenerationTransportHandlers:
 
     def _run(
         self,
-        callback: Callable[[ClaudeCardGenerationService], Any],
+        callback: Callable[[AgentCardGenerationService], Any],
     ) -> JsonObject:
         try:
             result = callback(self._service)
@@ -382,8 +391,8 @@ def _error_payload(error: BaseException) -> JsonObject:
     if isinstance(error, GenerationServiceError):
         return TransportError(error.code, error.message, error.details).to_payload()
     return TransportError(
-        "claude_generation_failed",
-        "Claude Code generation failed.",
+        "agent_generation_failed",
+        "Agent generation failed.",
         {
             "errorType": type(error).__name__,
             "error": str(error),
@@ -450,18 +459,39 @@ def _optional_card_count_mode(params: JsonObject, key: str) -> CardCountMode | N
             "invalid_params",
             f"{key} must be a non-empty string when provided.",
         )
-    if value not in ClaudeCardGenerationService.CARD_COUNT_MODES:
+    if value not in AgentCardGenerationService.CARD_COUNT_MODES:
         raise TransportError(
             "invalid_params",
             f"{key} is not a supported card count mode.",
             {
                 "cardCountMode": value,
                 "supportedCardCountModes": sorted(
-                    ClaudeCardGenerationService.CARD_COUNT_MODES
+                    AgentCardGenerationService.CARD_COUNT_MODES
                 ),
             },
         )
     return cast(CardCountMode, value)
+
+
+def _optional_agent_provider(params: JsonObject, key: str) -> AgentProvider | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a non-empty string when provided.",
+        )
+    if value not in ("claude", "codex"):
+        raise TransportError(
+            "invalid_params",
+            f"{key} is not a supported generation agent.",
+            {
+                "agentProvider": value,
+                "supportedAgentProviders": ["claude", "codex"],
+            },
+        )
+    return cast(AgentProvider, value)
 
 
 def _optional_int(
