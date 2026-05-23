@@ -13,9 +13,11 @@ object in ignored `anki_ai/config.local.json`; local values override
 `config.json`.
 The add-on also reads simple `export KEY=value` or `KEY=value` assignments for
 the mapped environment keys from common shell startup files such as `~/.zshrc`.
-It reads assignments only; it does not execute shell code.
+It reads assignments only; it does not execute shell code. Shell-file
+`OPENAI_API_KEY` is ignored so it cannot override local Codex auth.
 
 - `agentProvider`: `claude` or `codex`.
+- `codexAuthMode`: `local` to reuse `CODEX_HOME` auth state, or `api_key` to use `codexApiKey`/`OPENAI_API_KEY`.
 - `anthropicApiKey`: maps to `ANTHROPIC_API_KEY`.
 - `anthropicAuthToken`: maps to `ANTHROPIC_AUTH_TOKEN`.
 - `anthropicBaseUrl`: maps to `ANTHROPIC_BASE_URL`.
@@ -23,7 +25,7 @@ It reads assignments only; it does not execute shell code.
 - `claudeCodeOAuthToken`: maps to `CLAUDE_CODE_OAUTH_TOKEN`.
 - `claudeConfigDir`: maps to `CLAUDE_CONFIG_DIR`.
 - `claudeCliPath`: optional absolute path to the Claude Code executable.
-- `codexApiKey`: maps to `OPENAI_API_KEY`; omit it to reuse existing Codex auth.
+- `codexApiKey`: maps to `OPENAI_API_KEY` only when `codexAuthMode` is `api_key`; omit it to use the launch environment key.
 - `codexHome`: maps to `CODEX_HOME`; defaults to `~/.codex` so Codex Mac app/CLI login can be reused.
 - `codexModel`: optional Codex model override.
 - `codexReasoningEffort`: optional reasoning effort override; defaults to `high`.

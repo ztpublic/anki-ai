@@ -2,6 +2,7 @@
   "enabled": true,
   "generation": {
     "agentProvider": "claude",
+    "codexAuthMode": "local",
     "anthropicApiKey": "",
     "anthropicAuthToken": "",
     "anthropicBaseUrl": "",

@@ -242,6 +242,10 @@ class GenerationTransportHandlersTest(unittest.TestCase):
             "anki_ai.generation_transport.generation_harness_config",
             return_value={
                 "agentProvider": "codex",
+                "codexAuthMode": "local",
+                "codexApiKey": "",
+                "codexApiKeyConfigured": "false",
+                "codexHome": "/Users/test/.codex",
                 "httpProxy": "http://proxy.test:8080",
                 "httpsProxy": "http://secure-proxy.test:8443",
                 "noProxy": "localhost",
@@ -255,6 +259,8 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         assert response is not None
         self.assertTrue(response["ok"])
         self.assertEqual(response["result"]["agentProvider"], "codex")
+        self.assertEqual(response["result"]["codexAuthMode"], "local")
+        self.assertEqual(response["result"]["codexHome"], "/Users/test/.codex")
         self.assertEqual(response["result"]["httpProxy"], "http://proxy.test:8080")
 
     def test_update_config_updates_generation_harness_config(self) -> None:
@@ -266,6 +272,10 @@ class GenerationTransportHandlersTest(unittest.TestCase):
             "anki_ai.generation_transport.update_generation_harness_config",
             return_value={
                 "agentProvider": "codex",
+                "codexAuthMode": "api_key",
+                "codexApiKey": "",
+                "codexApiKeyConfigured": "true",
+                "codexHome": "",
                 "httpProxy": "http://proxy.test:8080",
                 "httpsProxy": "",
                 "noProxy": "",
@@ -276,6 +286,8 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "anki.generation.updateConfig",
                     {
                         "agentProvider": "codex",
+                        "codexAuthMode": "api_key",
+                        "codexApiKey": "sk-test",
                         "httpProxy": "http://proxy.test:8080",
                     },
                 )
@@ -285,9 +297,15 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         assert response is not None
         self.assertTrue(response["ok"])
         update_config.assert_called_once_with(
-            {"agentProvider": "codex", "httpProxy": "http://proxy.test:8080"}
+            {
+                "agentProvider": "codex",
+                "codexAuthMode": "api_key",
+                "codexApiKey": "sk-test",
+                "httpProxy": "http://proxy.test:8080",
+            }
         )
         self.assertEqual(response["result"]["agentProvider"], "codex")
+        self.assertEqual(response["result"]["codexAuthMode"], "api_key")
 
     def test_update_config_rejects_invalid_agent_provider(self) -> None:
         service = FakeGenerationService()

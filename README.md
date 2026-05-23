@@ -132,18 +132,20 @@ make build VENDOR_INCLUDE_CLAUDE_CLI=1
 ```
 
 Claude generation must have Anthropic-compatible authentication available to the
-Anki process. Codex generation uses `OPENAI_API_KEY`, `generation.codexApiKey`,
-or an existing Codex login state from `CODEX_HOME` (defaulting to `~/.codex`).
-Anki launched from Finder or Spotlight usually does not inherit shell
-environment variables, so a terminal setup that works for `claude` or `codex`
-may still be invisible to the add-on. Set the values under `generation` in
-Anki's add-on config or in an ignored
+Anki process. Codex generation defaults to local Codex auth state from
+`CODEX_HOME` (defaulting to `~/.codex`). Set `generation.codexAuthMode` to
+`api_key` to use `generation.codexApiKey` or a real launch-environment
+`OPENAI_API_KEY` instead. Anki launched from Finder or Spotlight usually does
+not inherit shell environment variables, so a terminal setup that works for
+`claude` or `codex` may still be invisible to the add-on. Set the values under
+`generation` in Anki's add-on config or in an ignored
 `anki_ai/config.local.json`, for example:
 
 ```json
 {
   "generation": {
     "agentProvider": "codex",
+    "codexAuthMode": "local",
     "anthropicAuthToken": "",
     "anthropicBaseUrl": "https://api.example.com",
     "anthropicModel": "provider-model-name",
@@ -158,17 +160,21 @@ Anki's add-on config or in an ignored
 ```
 
 `anthropicAuthToken` maps to `ANTHROPIC_AUTH_TOKEN`; alternatively use
-`anthropicApiKey` for `ANTHROPIC_API_KEY`. `codexApiKey` maps to
-`OPENAI_API_KEY`; leave it empty when you want the Codex SDK to reuse an
-existing login. `codexHome` maps to `CODEX_HOME`; use it when your Codex login
-state is not in the default `~/.codex`. Leave secrets out of commits and set
-them only in your local add-on configuration.
+`anthropicApiKey` for `ANTHROPIC_API_KEY`. `codexAuthMode` controls whether
+Codex ignores API keys and reuses local auth (`local`) or logs in with an API key
+(`api_key`). `codexApiKey` maps to `OPENAI_API_KEY` only in API-key mode.
+`codexHome` maps to `CODEX_HOME`; use it when your Codex login state is not in
+the default `~/.codex`. Leave secrets out of commits and set them only in your
+local add-on configuration.
 
 As a convenience for local development, the add-on also reads simple
-`export KEY=value` or `KEY=value` assignments for the same keys from common shell
-startup files such as `~/.zshrc`, `~/.zprofile`, and `~/.zshenv`. It does not
-execute those files, so computed values or assignments hidden behind shell
-conditionals should go in `config.local.json` instead.
+`export KEY=value` or `KEY=value` assignments for Claude/proxy/Codex home keys
+from common shell startup files such as `~/.zshrc`, `~/.zprofile`, and
+`~/.zshenv`. Shell-file `OPENAI_API_KEY` is intentionally ignored so a stale key
+cannot override local Codex auth; use `codexApiKey` or Anki's real launch
+environment in `api_key` mode instead. The add-on does not execute those files,
+so computed values or assignments hidden behind shell conditionals should go in
+`config.local.json` instead.
 
 For frontend-only iteration in a browser, you can run:
 

@@ -661,6 +661,120 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://base.example")
         self.assertEqual(env["ANTHROPIC_MODEL"], "local-model")
 
+    def test_codex_api_key_ignores_shell_startup_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zshrc_path = Path(temp_dir) / ".zshrc"
+            missing_path = Path(temp_dir) / ".zprofile"
+            zshrc_path.write_text(
+                "\n".join(
+                    [
+                        "OPENAI_API_KEY=stale-shell-key",
+                        "CODEX_HOME=/tmp/codex-home",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(
+                    generation_module,
+                    "_shell_env_file_candidates",
+                    return_value=[missing_path, zshrc_path],
+                ),
+                patch.object(generation_module, "ADDON_CONFIG_PATH", missing_path),
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    missing_path,
+                ),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                env = generation_module._codex_environment()
+                api_key = generation_module._configured_codex_api_key()
+
+        self.assertIsNone(api_key)
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertEqual(env["CODEX_HOME"], "/tmp/codex-home")
+
+    def test_codex_api_key_uses_config_or_launch_environment_in_api_key_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "generation": {
+                            "codexAuthMode": "api_key",
+                            "codexApiKey": "configured-key",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ANKI_AI_CONFIG_PATH": str(config_path),
+                    "OPENAI_API_KEY": "env-key",
+                },
+                clear=False,
+            ):
+                configured_key = generation_module._configured_codex_api_key()
+
+            config_path.write_text(
+                json.dumps({"generation": {"codexAuthMode": "api_key"}}),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ANKI_AI_CONFIG_PATH": str(config_path),
+                    "OPENAI_API_KEY": "env-key",
+                },
+                clear=False,
+            ):
+                env_key = generation_module._configured_codex_api_key()
+
+        self.assertEqual(configured_key, "configured-key")
+        self.assertEqual(env_key, "env-key")
+
+    def test_codex_local_auth_ignores_config_and_launch_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "generation": {
+                            "codexAuthMode": "local",
+                            "codexApiKey": "configured-key",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(generation_module, "ADDON_CONFIG_PATH", config_path),
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    Path(temp_dir) / "missing.local.json",
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "ANKI_AI_CONFIG_PATH": "",
+                        "OPENAI_API_KEY": "env-key",
+                    },
+                    clear=False,
+                ),
+            ):
+                api_key = generation_module._configured_codex_api_key()
+                env = _codex_app_server_environment()
+
+        self.assertIsNone(api_key)
+        self.assertNotIn("OPENAI_API_KEY", env)
+
     def test_generation_harness_config_returns_merged_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base_config_path = Path(temp_dir) / "config.json"
@@ -670,6 +784,8 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                     {
                         "generation": {
                             "agentProvider": "claude",
+                            "codexAuthMode": "api_key",
+                            "codexApiKey": "base-key",
                             "httpProxy": "http://base-proxy.test:8080",
                         }
                     }
@@ -681,6 +797,8 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                     {
                         "generation": {
                             "agentProvider": "codex",
+                            "codexAuthMode": "local",
+                            "codexHome": "/tmp/codex-home",
                             "httpsProxy": "http://local-proxy.test:8443",
                             "noProxy": "localhost",
                         }
@@ -704,6 +822,10 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             config,
             {
                 "agentProvider": "codex",
+                "codexAuthMode": "local",
+                "codexApiKey": "",
+                "codexApiKeyConfigured": "true",
+                "codexHome": "/tmp/codex-home",
                 "httpProxy": "http://base-proxy.test:8080",
                 "httpsProxy": "http://local-proxy.test:8443",
                 "noProxy": "localhost",
@@ -746,6 +868,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 result = update_generation_harness_config(
                     {
                         "agentProvider": "codex",
+                        "codexAuthMode": "api-key",
+                        "codexApiKey": "sk-local",
+                        "codexHome": " /tmp/codex-home ",
                         "httpProxy": " http://new-proxy.test:8080 ",
                         "httpsProxy": "http://secure-proxy.test:8443",
                         "noProxy": "",
@@ -760,6 +885,9 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 "codexModel": "gpt-local",
                 "httpProxy": "http://new-proxy.test:8080",
                 "agentProvider": "codex",
+                "codexAuthMode": "api_key",
+                "codexApiKey": "sk-local",
+                "codexHome": "/tmp/codex-home",
                 "httpsProxy": "http://secure-proxy.test:8443",
             },
         )
@@ -767,6 +895,10 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             result,
             {
                 "agentProvider": "codex",
+                "codexAuthMode": "api_key",
+                "codexApiKey": "",
+                "codexApiKeyConfigured": "true",
+                "codexHome": "/tmp/codex-home",
                 "httpProxy": "http://new-proxy.test:8080",
                 "httpsProxy": "http://secure-proxy.test:8443",
                 "noProxy": "",
@@ -790,6 +922,25 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                     update_generation_harness_config({"agentProvider": "other"})
 
         self.assertEqual(error.exception.code, "invalid_agent_provider")
+        self.assertFalse(local_config_path.exists())
+
+    def test_update_generation_harness_config_rejects_invalid_codex_auth_mode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_config_path = Path(temp_dir) / "config.local.json"
+            with (
+                patch.object(
+                    generation_module,
+                    "ADDON_LOCAL_CONFIG_PATH",
+                    local_config_path,
+                ),
+                patch.dict(os.environ, {"ANKI_AI_CONFIG_PATH": ""}, clear=False),
+            ):
+                with self.assertRaises(GenerationServiceError) as error:
+                    update_generation_harness_config({"codexAuthMode": "oauth"})
+
+        self.assertEqual(error.exception.code, "invalid_codex_auth_mode")
         self.assertFalse(local_config_path.exists())
 
     def test_codex_app_server_environment_uses_proxy_config(self) -> None:

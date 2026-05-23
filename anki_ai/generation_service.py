@@ -64,6 +64,7 @@ class CardRegenerationResult(TypedDict):
 
 
 AgentProvider = Literal["claude", "codex"]
+CodexAuthMode = Literal["local", "api_key"]
 
 
 class AgentRunMetadata(TypedDict, total=False):
@@ -115,6 +116,7 @@ WorkspaceFactory = Callable[[], Path]
 RATE_LIMIT_ERROR_CODE = "claude_generation_rate_limited"
 CODEX_RATE_LIMIT_ERROR_CODE = "codex_generation_rate_limited"
 DEFAULT_AGENT_PROVIDER: AgentProvider = "claude"
+DEFAULT_CODEX_AUTH_MODE: CodexAuthMode = "local"
 DEFAULT_CODEX_MODEL = "gpt-5.4"
 DEFAULT_CODEX_REASONING_EFFORT = "high"
 LOG_LEVEL_RANKS = {
@@ -175,6 +177,9 @@ CODEX_ENV_CONFIG_KEYS = {
 CODEX_ENV_KEYS = tuple(CODEX_ENV_CONFIG_KEYS.values())
 GENERATION_HARNESS_CONFIG_KEYS = (
     "agentProvider",
+    "codexAuthMode",
+    "codexApiKey",
+    "codexHome",
     "httpProxy",
     "httpsProxy",
     "noProxy",
@@ -1581,6 +1586,8 @@ def _codex_environment() -> dict[str, str]:
 
 def _codex_app_server_environment() -> dict[str, str]:
     env = _codex_environment()
+    if _configured_codex_auth_mode() == "local":
+        env.pop("OPENAI_API_KEY", None)
     if "CODEX_HOME" not in env:
         env["CODEX_HOME"] = str(Path.home() / ".codex")
     return env
@@ -1594,6 +1601,12 @@ def generation_harness_config() -> dict[str, str]:
     config = _generation_config()
     return {
         "agentProvider": _configured_agent_provider(),
+        "codexAuthMode": _configured_codex_auth_mode(),
+        "codexApiKey": "",
+        "codexApiKeyConfigured": (
+            "true" if _configured_codex_api_key_value(config) else "false"
+        ),
+        "codexHome": _config_string(config, "codexHome"),
         "httpProxy": _config_string(config, "httpProxy"),
         "httpsProxy": _config_string(config, "httpsProxy"),
         "noProxy": _config_string(config, "noProxy"),
@@ -1621,8 +1634,12 @@ def update_generation_harness_config(values: dict[str, Any]) -> dict[str, str]:
         generation_config["agentProvider"] = _normalize_agent_provider(
             values["agentProvider"]
         )
+    if "codexAuthMode" in values:
+        generation_config["codexAuthMode"] = _normalize_codex_auth_mode(
+            values["codexAuthMode"]
+        )
 
-    for key in ("httpProxy", "httpsProxy", "noProxy"):
+    for key in ("codexApiKey", "codexHome", "httpProxy", "httpsProxy", "noProxy"):
         if key not in values:
             continue
         value = values[key]
@@ -1663,10 +1680,43 @@ def _normalize_agent_provider(value: AgentProvider | str | None) -> AgentProvide
     return cast(AgentProvider, provider)
 
 
+def _normalize_codex_auth_mode(value: CodexAuthMode | str | None) -> CodexAuthMode:
+    configured = DEFAULT_CODEX_AUTH_MODE if value is None else value
+    if not isinstance(configured, str) or not configured.strip():
+        return DEFAULT_CODEX_AUTH_MODE
+    mode = configured.strip().lower()
+    if mode in ("api-key", "api_key", "apikey"):
+        mode = "api_key"
+    if mode not in ("local", "api_key"):
+        raise GenerationServiceError(
+            "invalid_codex_auth_mode",
+            "generation.codexAuthMode must be one of: local, api_key.",
+            {"codexAuthMode": configured},
+        )
+    return cast(CodexAuthMode, mode)
+
+
+def _configured_codex_auth_mode() -> CodexAuthMode:
+    return _normalize_codex_auth_mode(_generation_config().get("codexAuthMode"))
+
+
+def _configured_codex_api_key_value(config: dict[str, Any]) -> str | None:
+    configured = config.get("codexApiKey")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return None
+
+
 def _configured_codex_api_key() -> str | None:
-    env = _codex_environment()
-    value = env.get("OPENAI_API_KEY")
-    return value if value else None
+    if _configured_codex_auth_mode() != "api_key":
+        return None
+
+    configured = _configured_codex_api_key_value(_generation_config())
+    if configured:
+        return configured
+
+    value = os.environ.get("OPENAI_API_KEY")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _configured_codex_model() -> str:
@@ -1708,8 +1758,9 @@ def _load_shell_generation_environment() -> dict[str, str]:
 
 def _load_shell_codex_environment() -> dict[str, str]:
     env: dict[str, str] = {}
+    allowed_keys = set(CODEX_ENV_KEYS) - {"OPENAI_API_KEY"}
     for path in _shell_env_file_candidates():
-        env.update(_read_shell_environment(path, allowed_keys=set(CODEX_ENV_KEYS)))
+        env.update(_read_shell_environment(path, allowed_keys=allowed_keys))
     return env
 
 

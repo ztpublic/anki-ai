@@ -50,6 +50,7 @@ type CardTypeId = "basic" | "markdown";
 type CardCountMode = "less" | "normal" | "more";
 type CardCountStrategy = "fixed" | "smart";
 type AgentProvider = "claude" | "codex";
+type CodexAuthMode = "local" | "api_key";
 
 type EditableCardField = "front" | "back";
 type CardContentFormat = "plain" | "markdown";
@@ -103,6 +104,10 @@ type StartRegenerateAnswerResponse = {
 
 type GenerationHarnessConfig = {
   agentProvider: AgentProvider;
+  codexAuthMode: CodexAuthMode;
+  codexApiKey: string;
+  codexApiKeyConfigured: string;
+  codexHome: string;
   httpProxy: string;
   httpsProxy: string;
   noProxy: string;
@@ -285,8 +290,13 @@ const DEFAULT_CARD_COUNT = 5;
 const DEFAULT_CARD_COUNT_STRATEGY: CardCountStrategy = "fixed";
 const DEFAULT_CARD_COUNT_MODE: CardCountMode = "normal";
 const DEFAULT_AGENT_PROVIDER: AgentProvider = "claude";
+const DEFAULT_CODEX_AUTH_MODE: CodexAuthMode = "local";
 const DEFAULT_GENERATION_HARNESS_CONFIG: GenerationHarnessConfig = {
   agentProvider: DEFAULT_AGENT_PROVIDER,
+  codexAuthMode: DEFAULT_CODEX_AUTH_MODE,
+  codexApiKey: "",
+  codexApiKeyConfigured: "false",
+  codexHome: "",
   httpProxy: "",
   httpsProxy: "",
   noProxy: "",
@@ -300,6 +310,10 @@ const CARD_COUNT_MODE_OPTIONS: { id: CardCountMode; label: string }[] = [
 const AGENT_PROVIDER_OPTIONS: { id: AgentProvider; label: string }[] = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
+];
+const CODEX_AUTH_MODE_OPTIONS: { id: CodexAuthMode; label: string }[] = [
+  { id: "local", label: "Local login" },
+  { id: "api_key", label: "API key" },
 ];
 
 const CARD_TYPES: Record<CardTypeId, CardTypeDefinition> = {
@@ -429,6 +443,14 @@ function normalizeGenerationHarnessConfig(
       value.agentProvider === "codex" || value.agentProvider === "claude"
         ? value.agentProvider
         : DEFAULT_AGENT_PROVIDER,
+    codexAuthMode:
+      value.codexAuthMode === "api_key" || value.codexAuthMode === "local"
+        ? value.codexAuthMode
+        : DEFAULT_CODEX_AUTH_MODE,
+    codexApiKey: "",
+    codexApiKeyConfigured:
+      value.codexApiKeyConfigured === "true" ? "true" : "false",
+    codexHome: typeof value.codexHome === "string" ? value.codexHome : "",
     httpProxy: typeof value.httpProxy === "string" ? value.httpProxy : "",
     httpsProxy: typeof value.httpsProxy === "string" ? value.httpsProxy : "",
     noProxy: typeof value.noProxy === "string" ? value.noProxy : "",
@@ -1252,6 +1274,7 @@ export function App() {
     generatedCards.length > 0 &&
     !isSavingCards &&
     !isRegeneratingCard;
+  const canSaveCurrentCard = canSaveCards && currentCard !== undefined;
 
   useEffect(() => {
     if (!currentCard || currentCardType?.contentFormat !== "markdown") {
@@ -1802,9 +1825,9 @@ export function App() {
     showAgentMessages,
   ]);
 
-  const handleFinish = async () => {
-    if (selectedDeck === null || generatedCards.length === 0 || isSavingCards) {
-      return;
+  const saveCardsToSelectedDeck = async (cardsToSave: Flashcard[]) => {
+    if (selectedDeck === null || cardsToSave.length === 0) {
+      return null;
     }
 
     setIsSavingCards(true);
@@ -1813,7 +1836,7 @@ export function App() {
 
     try {
       const cardPayloads = await Promise.all(
-        generatedCards.map<Promise<InsertCardPayload>>(async (card) => ({
+        cardsToSave.map<Promise<InsertCardPayload>>(async (card) => ({
           fields: await ankiFieldsForCard(card),
         })),
       );
@@ -1829,9 +1852,9 @@ export function App() {
 
       const savedCards = result.cards.map((card, index) => ({
         id: card.id,
-        cardType: generatedCards[index]?.cardType ?? DEFAULT_CARD_TYPE_ID,
-        front: generatedCards[index]?.front ?? card.fields.Front ?? card.question,
-        back: generatedCards[index]?.back ?? card.fields.Back ?? card.answer,
+        cardType: cardsToSave[index]?.cardType ?? DEFAULT_CARD_TYPE_ID,
+        front: cardsToSave[index]?.front ?? card.fields.Front ?? card.question,
+        back: cardsToSave[index]?.back ?? card.fields.Back ?? card.answer,
         deckId: result.deck.id,
         deckName: result.deck.name,
       }));
@@ -1849,17 +1872,61 @@ export function App() {
           };
         }),
       );
-      setGeneratedCards([]);
-      setSuggestedReplacement(null);
-      setCurrentCardIndex(0);
-      setSaveSuccessMessage(
-        `Saved ${result.cards.length} cards to ${result.deck.name}.`,
-      );
+      return result;
     } catch (error) {
       setSaveError(saveErrorMessage(error));
+      return null;
     } finally {
       setIsSavingCards(false);
     }
+  };
+
+  const handleSaveCurrentCard = async () => {
+    if (!currentCard || !canSaveCurrentCard) {
+      return;
+    }
+
+    const cardToSave = currentCard;
+    const savedCardIndex = currentCardIndex;
+    const result = await saveCardsToSelectedDeck([cardToSave]);
+    if (result === null) {
+      return;
+    }
+
+    setGeneratedCards((previousCards) =>
+      previousCards.filter((card) => card.id !== cardToSave.id),
+    );
+    setSuggestedReplacement((previousSuggestion) =>
+      previousSuggestion?.cardId === cardToSave.id ? null : previousSuggestion,
+    );
+    setCurrentCardIndex((previousIndex) =>
+      Math.max(
+        0,
+        Math.min(
+          previousIndex === savedCardIndex ? previousIndex : savedCardIndex,
+          generatedCards.length - 2,
+        ),
+      ),
+    );
+    setSaveSuccessMessage(`Saved current card to ${result.deck.name}.`);
+  };
+
+  const handleFinish = async () => {
+    if (selectedDeck === null || generatedCards.length === 0 || isSavingCards) {
+      return;
+    }
+
+    const result = await saveCardsToSelectedDeck(generatedCards);
+    if (result === null) {
+      return;
+    }
+
+    setGeneratedCards([]);
+    setSuggestedReplacement(null);
+    setCurrentCardIndex(0);
+    setSaveSuccessMessage(
+      `Saved ${result.cards.length} cards to ${result.deck.name}.`,
+    );
   };
 
   const handleCardUpdate = (field: EditableCardField, value: string) => {
@@ -2002,9 +2069,15 @@ export function App() {
     setIsSavingAgentSettings(true);
     setAgentSettingsError(null);
     try {
+      const settingsPayload: Partial<GenerationHarnessConfig> = {
+        ...draftGenerationHarnessConfig,
+      };
+      if (!draftGenerationHarnessConfig.codexApiKey.trim()) {
+        delete settingsPayload.codexApiKey;
+      }
       const result = await window.AnkiAI.call<GenerationHarnessConfig>(
         "anki.generation.updateConfig",
-        draftGenerationHarnessConfig,
+        settingsPayload,
         { timeoutMs: 5000 },
       );
       const normalizedConfig = normalizeGenerationHarnessConfig(result);
@@ -2467,19 +2540,37 @@ export function App() {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleFinish}
-                  disabled={!canSaveCards}
-                  className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  {isSavingCards ? "Saving..." : `Save ${generatedCards.length} Cards`}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveCurrentCard()}
+                    disabled={!canSaveCurrentCard}
+                    className="flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {isSavingCards ? "Saving..." : "Save Current"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleFinish()}
+                    disabled={!canSaveCards}
+                    className="flex h-8 items-center gap-2 rounded-md bg-zinc-800 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-zinc-500 disabled:hover:bg-zinc-300"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {isSavingCards
+                      ? "Saving..."
+                      : `Save ${generatedCards.length} Cards`}
+                  </button>
+                </div>
               </div>
               {saveError !== null ? (
                 <div className="border-t border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
                   {saveError}
+                </div>
+              ) : null}
+              {saveSuccessMessage !== null ? (
+                <div className="border-t border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
+                  {saveSuccessMessage}
                 </div>
               ) : null}
             </div>
@@ -2575,6 +2666,88 @@ export function App() {
                   })}
                 </div>
               </div>
+
+              {draftGenerationHarnessConfig.agentProvider === "codex" ? (
+                <>
+                  <div className="space-y-1.5">
+                    <span className="block text-xs font-semibold text-zinc-600">
+                      Codex Auth
+                    </span>
+                    <div
+                      className="grid grid-cols-2 rounded-md border border-zinc-300 bg-zinc-100 p-0.5"
+                      role="radiogroup"
+                      aria-label="Codex authentication mode"
+                    >
+                      {CODEX_AUTH_MODE_OPTIONS.map((option) => {
+                        const isSelected =
+                          draftGenerationHarnessConfig.codexAuthMode === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={isSelected}
+                            onClick={() =>
+                              updateDraftAgentSettings("codexAuthMode", option.id)
+                            }
+                            className={`h-8 rounded text-xs font-semibold transition-colors ${
+                              isSelected
+                                ? "bg-white text-indigo-600 shadow-sm"
+                                : "text-zinc-600 hover:bg-white/70"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {draftGenerationHarnessConfig.codexAuthMode === "api_key" ? (
+                    <div className="space-y-1.5">
+                      <label
+                        className="block text-xs font-semibold text-zinc-600"
+                        htmlFor="agent-codex-api-key"
+                      >
+                        Codex API key
+                      </label>
+                      <input
+                        id="agent-codex-api-key"
+                        type="password"
+                        value={draftGenerationHarnessConfig.codexApiKey}
+                        onChange={(event) =>
+                          updateDraftAgentSettings("codexApiKey", event.target.value)
+                        }
+                        className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                        placeholder={
+                          draftGenerationHarnessConfig.codexApiKeyConfigured === "true"
+                            ? "Saved key is configured"
+                            : "sk-..."
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <label
+                        className="block text-xs font-semibold text-zinc-600"
+                        htmlFor="agent-codex-home"
+                      >
+                        Codex home
+                      </label>
+                      <input
+                        id="agent-codex-home"
+                        type="text"
+                        value={draftGenerationHarnessConfig.codexHome}
+                        onChange={(event) =>
+                          updateDraftAgentSettings("codexHome", event.target.value)
+                        }
+                        className="block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                        placeholder="~/.codex"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : null}
 
               <div className="space-y-1.5">
                 <label
