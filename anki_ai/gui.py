@@ -125,6 +125,7 @@ class GeneratorDialog(QDialog):
         register_file_conversion_transport_handlers(self._transport)
         register_generation_transport_handlers(
             self._transport,
+            collection_provider=lambda: mw.col,
             background_runner=_run_generation_in_background,
             event_emitter=self._emit_transport_event,
         )

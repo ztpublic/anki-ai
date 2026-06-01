@@ -15,9 +15,9 @@ VENDOR_PYTHON ?= python
 FRONTEND_SOURCES := $(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/index.html $(FRONTEND_DIR)/vite.config.ts $(FRONTEND_DIR)/package.json $(FRONTEND_DIR)/package-lock.json -type f 2>/dev/null)
 ADDON_SOURCES := $(shell find $(ADDON_PACKAGE) -type f \( -path '$(VENDOR_DIR)/*' -o -path '$(ADDON_PACKAGE)/web/*' -o -path '*/__pycache__/*' \) -prune -o -type f -print 2>/dev/null)
 
-.PHONY: build frontend-build typecheck vendor-python vendor-python-refresh package clean
+.PHONY: build frontend-build typecheck vendor-python vendor-python-refresh clean
 
-build: package
+build: $(ADDON_ARCHIVE)
 
 typecheck:
 	python -m mypy $(ADDON_PACKAGE)
@@ -62,8 +62,6 @@ $(ADDON_ARCHIVE): $(FRONTEND_STAMP) $(VENDOR_STAMP) $(ADDON_SOURCES)
 	mkdir -p $(DIST_DIR)
 	rm -f $(ADDON_ARCHIVE)
 	cd $(ADDON_PACKAGE) && zip $(ZIP_FLAGS) ../$(ADDON_ARCHIVE) . -x '__pycache__/' '__pycache__/*' '*/__pycache__/' '*/__pycache__/*' '*.pyc' '*.pyo' '.DS_Store'
-
-package: $(ADDON_ARCHIVE)
 
 clean:
 	rm -rf $(DIST_DIR)

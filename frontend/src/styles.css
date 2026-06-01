@@ -23,6 +23,7 @@ html {
 }
 
 body {
+  background-color: #fafafa;
   overflow: hidden;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

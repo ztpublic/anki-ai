@@ -5,14 +5,16 @@ from __future__ import annotations
 import threading
 import uuid
 from collections.abc import Callable
-from typing import Any, Union, cast
+from typing import Any, Optional, Union, cast
 
 from .card_generation_workflows import CardCountMode
 from .card_types import DEFAULT_CARD_TYPE_ID, card_type_ids
+from .collection_services import AnkiCollectionService, CollectionServiceError
 from .generation_service import (
     AgentCardGenerationService,
     AgentProvider,
     CardRegenerationResult,
+    ExistingCardInput,
     GenerationLogEvent,
     GenerationResult,
     GenerationServiceError,
@@ -31,18 +33,21 @@ GenerationBackgroundRunner = Callable[
     None,
 ]
 GenerationEventEmitter = Callable[[str, JsonObject], None]
+CollectionProvider = Callable[[], Optional[Any]]
 
 
 def register_generation_transport_handlers(
     router: TransportRouter,
     service: AgentCardGenerationService | None = None,
     *,
+    collection_provider: CollectionProvider | None = None,
     background_runner: GenerationBackgroundRunner | None = None,
     event_emitter: GenerationEventEmitter | None = None,
 ) -> None:
     """Register generation bridge methods on a transport router."""
     handlers = GenerationTransportHandlers(
         service,
+        collection_provider=collection_provider,
         background_runner=background_runner,
         event_emitter=event_emitter,
     )
@@ -65,10 +70,12 @@ class GenerationTransportHandlers:
         self,
         service: AgentCardGenerationService | None = None,
         *,
+        collection_provider: CollectionProvider | None = None,
         background_runner: GenerationBackgroundRunner | None = None,
         event_emitter: GenerationEventEmitter | None = None,
     ) -> None:
         self._service = AgentCardGenerationService() if service is None else service
+        self._collection_provider = collection_provider
         self._background_runner = (
             _default_background_runner
             if background_runner is None
@@ -93,10 +100,17 @@ class GenerationTransportHandlers:
             raise TransportError(error.code, error.message, error.details) from error
 
     def generate_cards(self, params: JsonObject) -> JsonObject:
-        source_text, materials, card_count, card_count_mode, card_type, instructions = (
-            self._generation_inputs(params)
-        )
+        (
+            source_text,
+            materials,
+            card_count,
+            card_count_mode,
+            card_type,
+            instructions,
+            target_deck_id,
+        ) = self._generation_inputs(params)
         agent_provider = _optional_agent_provider(params, "agentProvider")
+        existing_cards = self._existing_cards_for_target_deck(target_deck_id)
 
         return self._run(
             lambda service: service.generate_cards(
@@ -107,6 +121,7 @@ class GenerationTransportHandlers:
                 card_type=card_type,
                 agent_provider=agent_provider,
                 instructions=instructions,
+                existing_cards=existing_cards,
             )
         )
 
@@ -192,10 +207,17 @@ class GenerationTransportHandlers:
                 "Generation events are not available in this bridge context.",
             )
 
-        source_text, materials, card_count, card_count_mode, card_type, instructions = (
-            self._generation_inputs(params)
-        )
+        (
+            source_text,
+            materials,
+            card_count,
+            card_count_mode,
+            card_type,
+            instructions,
+            target_deck_id,
+        ) = self._generation_inputs(params)
         agent_provider = _optional_agent_provider(params, "agentProvider")
+        existing_cards = self._existing_cards_for_target_deck(target_deck_id)
         job_id = str(uuid.uuid4())
 
         with self._jobs_lock:
@@ -254,6 +276,7 @@ class GenerationTransportHandlers:
                 card_type=card_type,
                 agent_provider=agent_provider,
                 instructions=instructions,
+                existing_cards=existing_cards,
                 log_sink=log_sink,
             )
             if is_cancelled():
@@ -327,6 +350,7 @@ class GenerationTransportHandlers:
         CardCountMode | None,
         str,
         str | None,
+        int | None,
     ]:
         source_text = _optional_string(params, "sourceText")
         instructions = _optional_text(params, "instructions")
@@ -340,6 +364,7 @@ class GenerationTransportHandlers:
         card_count_mode = _optional_card_count_mode(params, "cardCountMode")
         card_type = _optional_card_type(params, "cardType")
         materials = _optional_material_inputs(params, "materials")
+        target_deck_id = _optional_id(params, "targetDeckId")
 
         if source_text is None and not materials:
             raise TransportError(
@@ -357,6 +382,7 @@ class GenerationTransportHandlers:
             card_count_mode,
             card_type,
             instructions,
+            target_deck_id,
         )
 
     def _card_regeneration_inputs(
@@ -385,6 +411,42 @@ class GenerationTransportHandlers:
                 "Generation service returned a non-object payload.",
             )
         return cast(JsonObject, result)
+
+    def _existing_cards_for_target_deck(
+        self,
+        target_deck_id: int | None,
+    ) -> list[ExistingCardInput] | None:
+        if target_deck_id is None:
+            return None
+        if self._collection_provider is None:
+            raise TransportError(
+                "collection_unavailable",
+                "Anki collection is not available for target deck indexing.",
+            )
+        collection = self._collection_provider()
+        if collection is None:
+            raise TransportError(
+                "collection_unavailable",
+                "Anki collection is not available for target deck indexing.",
+            )
+
+        try:
+            snapshots = AnkiCollectionService(collection).cards_in_deck(target_deck_id)
+        except CollectionServiceError as error:
+            raise TransportError(error.code, error.message, error.details) from error
+
+        existing_cards: list[ExistingCardInput] = []
+        for snapshot in snapshots:
+            front = snapshot["fields"].get("Front") or snapshot["question"]
+            existing_cards.append(
+                {
+                    "cardId": snapshot["id"],
+                    "noteId": snapshot["noteId"],
+                    "deckId": snapshot["deckId"],
+                    "front": front,
+                }
+            )
+        return existing_cards
 
 
 def _default_background_runner(
@@ -531,6 +593,33 @@ def _optional_int(
             f"{key} must be between {minimum} and {maximum}.",
         )
     return cast(int, value)
+
+
+def _optional_id(params: JsonObject, key: str) -> int | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be an integer id.",
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError as error:
+            raise TransportError(
+                "invalid_params",
+                f"{key} must be an integer id.",
+                {key: value},
+            ) from error
+    raise TransportError(
+        "invalid_params",
+        f"{key} must be an integer id.",
+        {key: value},
+    )
 
 
 def _optional_material_inputs(params: JsonObject, key: str) -> list[MaterialInput]:

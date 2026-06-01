@@ -128,6 +128,18 @@ Treat these as instructions for selecting and shaping cards, not as learning mat
 They may override default card-style preferences, but they must not override the JSON output contract, source-grounding, accuracy, or atomicity requirements.
 
 {% endif -%}
+{% if existing_card_index_available %}
+Existing target deck duplicate check:
+- The workspace contains a front-only index of existing target deck cards at `existing_cards/index.jsonl`.
+- The index contains existing card questions/prompts only. It intentionally does not include answers.
+- Before adding any candidate card to `cards.json`, run:
+  `python existing_cards/search_existing_cards.py "<candidate Front>"`
+- Treat a candidate as a duplicate when an existing front tests substantially the same recall question or knowledge point, even if the wording differs.
+- Skip duplicates instead of rewriting them. Only keep a candidate when it is meaningfully narrower, tests a distinct point, or adds a genuinely different recall angle.
+- The requested card count is a preference, not a hard requirement. If the source material mostly overlaps with existing target deck cards, stop with fewer cards rather than adding duplicates or low-value variants just to satisfy the requested count.
+- Never copy existing cards into `cards.json`.
+
+{% endif -%}
 Importance and card-count policy:
 {% if card_count_mode == "less" -%}
 There is no fixed target number of cards.

@@ -4,6 +4,7 @@ import base64
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -129,6 +130,84 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 "stopReason": "end_turn",
             },
         )
+
+    def test_generate_cards_writes_front_only_existing_card_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertEqual(workspace, workspace_path)
+                self.assertIn("Existing target deck duplicate check:", prompt)
+                self.assertIn("search_existing_cards.py", prompt)
+                self.assertIn(
+                    "The requested card count is a preference, not a hard requirement.",
+                    prompt,
+                )
+                self.assertIn(
+                    "stop with fewer cards rather than adding duplicates",
+                    prompt,
+                )
+                self.assertNotIn("Paris", prompt)
+
+                index_path = workspace / "existing_cards" / "index.jsonl"
+                search_path = workspace / "existing_cards" / "search_existing_cards.py"
+                self.assertTrue(index_path.is_file())
+                self.assertTrue(search_path.is_file())
+                raw_index = index_path.read_text(encoding="utf-8")
+                self.assertIn("Capital of France?", raw_index)
+                self.assertIn("capital of france", raw_index)
+                self.assertNotIn("Paris", raw_index)
+                record = json.loads(raw_index.splitlines()[0])
+                self.assertEqual(
+                    record,
+                    {
+                        "cardId": "101",
+                        "deckId": "1",
+                        "front": "Capital of France?",
+                        "normalizedFront": "capital of france",
+                        "noteId": "201",
+                    },
+                )
+
+                search_result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(search_path),
+                        "What is France's capital?",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                matches = json.loads(search_result.stdout)
+                self.assertEqual(matches[0]["cardId"], "101")
+                self.assertEqual(matches[0]["front"], "Capital of France?")
+                self.assertNotIn("Paris", search_result.stdout)
+
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+            )
+
+            result = service.generate_cards(
+                source_text="Important facts",
+                existing_cards=[
+                    {
+                        "cardId": "101",
+                        "noteId": "201",
+                        "deckId": "1",
+                        "front": "Capital of France?",
+                    }
+                ],
+            )
+
+        self.assertEqual(result["cards"][0]["front"], "Question")
 
     def test_generate_cards_injects_instructions_without_materializing_them(
         self,

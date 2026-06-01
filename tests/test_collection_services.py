@@ -72,6 +72,15 @@ class AnkiCollectionServiceTest(unittest.TestCase):
         self.assertEqual(card["tags"], ["geography"])
         self.assertEqual(card["state"]["factor"], 2500)
 
+    def test_cards_in_deck_returns_all_card_snapshots_for_deck(self) -> None:
+        collection = FakeCollection()
+        service = AnkiCollectionService(collection)
+
+        cards = service.cards_in_deck(1)
+
+        self.assertEqual([card["id"] for card in cards], ["101"])
+        self.assertEqual(cards[0]["fields"]["Front"], "Capital of France?")
+
     def test_update_note_fields_persists_note_and_returns_updated_card(self) -> None:
         collection = FakeCollection()
         service = AnkiCollectionService(collection)

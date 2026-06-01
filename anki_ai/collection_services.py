@@ -250,6 +250,29 @@ class AnkiCollectionService:
 
         return snapshots
 
+    def cards_in_deck(self, deck_id: int) -> list[CardSnapshot]:
+        deck = self.get_deck(deck_id, include_card_counts=False)
+        find_cards = getattr(self._collection, "find_cards", None)
+        if not callable(find_cards):
+            raise CollectionServiceError(
+                "unsupported_card_api",
+                "The active Anki collection cannot search cards.",
+            )
+
+        raw_card_ids = find_cards(
+            f'deck:"{self._escape_search_value(deck["name"])}"'
+        )
+        if not isinstance(raw_card_ids, Iterable):
+            raise CollectionServiceError(
+                "invalid_card_search_result",
+                "Anki returned an invalid card search result.",
+            )
+
+        return [
+            self.get_card(self._coerce_int(raw_card_id, "card_id"))
+            for raw_card_id in raw_card_ids
+        ]
+
     def get_card(self, card_id: int) -> CardSnapshot:
         card = self._get_card_object(card_id)
         note = self._note_for_card(card)

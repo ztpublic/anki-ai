@@ -1727,6 +1727,7 @@ export function App() {
           ...(cardCountStrategy === "fixed" ? { cardCount } : { cardCountMode }),
           cardType: selectedCardTypeId,
           agentProvider: generationHarnessConfig.agentProvider,
+          ...(selectedDeck !== null ? { targetDeckId: selectedDeck.id } : {}),
           materials,
         },
         { timeoutMs: 10000 },
@@ -2093,8 +2094,8 @@ export function App() {
 
   return (
     <>
-      <div className="flex h-full overflow-hidden bg-zinc-200 p-4 font-sans text-zinc-900 selection:bg-indigo-100 selection:text-indigo-900">
-      <main className="mx-auto flex h-full max-h-[820px] min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-zinc-300 bg-zinc-50 shadow-[0_8px_30px_rgba(24,24,27,0.14)] lg:flex-row">
+      <div className="flex h-full overflow-hidden bg-zinc-50 font-sans text-zinc-900 selection:bg-indigo-100 selection:text-indigo-900">
+      <main className="flex h-full min-h-0 w-full flex-col overflow-hidden border border-zinc-300 bg-zinc-50 lg:flex-row">
         <section className="flex min-h-0 w-full flex-col border-b border-zinc-300 bg-zinc-100 lg:w-[330px] lg:border-b-0 lg:border-r">
           <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-300 bg-zinc-100 px-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-800">

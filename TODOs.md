@@ -1,3 +1,11 @@
+- existing cards search tool? agentic search?
+
+
+
+
+
+
+
 - add xxx to .md convert support
 - context management, split huge matierals and generate seperately
 - prompt templet

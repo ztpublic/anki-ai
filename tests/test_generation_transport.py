@@ -9,6 +9,8 @@ from anki_ai.generation_service import GenerationLogEvent, GenerationServiceErro
 from anki_ai.generation_transport import register_generation_transport_handlers
 from anki_ai.transport import PROTOCOL, JsonObject, TransportRouter
 
+from .fakes import FakeCollection
+
 
 def request_message(
     method: str,
@@ -40,6 +42,7 @@ class FakeGenerationService:
         card_type: str = "basic",
         agent_provider: str | None = None,
         instructions: str | None = None,
+        existing_cards: list[dict[str, str]] | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         if log_sink is not None:
@@ -61,6 +64,7 @@ class FakeGenerationService:
                 "card_type": card_type,
                 "agent_provider": agent_provider,
                 "instructions": instructions,
+                "existing_cards": existing_cards,
             }
         )
         return {
@@ -111,6 +115,7 @@ class RateLimitedGenerationService:
         card_type: str = "basic",
         agent_provider: str | None = None,
         instructions: str | None = None,
+        existing_cards: list[dict[str, str]] | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
         _ = source_text
@@ -120,6 +125,7 @@ class RateLimitedGenerationService:
         _ = card_type
         _ = agent_provider
         _ = instructions
+        _ = existing_cards
         _ = log_sink
         raise GenerationServiceError(
             "claude_generation_rate_limited",
@@ -169,6 +175,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "card_type": "basic",
                     "agent_provider": None,
                     "instructions": "Only generate yes/no questions.",
+                    "existing_cards": None,
                 }
             ],
         )
@@ -194,6 +201,44 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(service.calls[-1]["card_count"], 12)
         self.assertEqual(service.calls[-1]["card_count_mode"], "more")
+
+    def test_generate_cards_passes_front_only_existing_cards_for_target_deck(
+        self,
+    ) -> None:
+        service = FakeGenerationService()
+        collection = FakeCollection()
+        router = TransportRouter()
+        register_generation_transport_handlers(
+            router,
+            service,
+            collection_provider=lambda: collection,
+        )
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {
+                    "sourceText": "Important facts",
+                    "targetDeckId": "1",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        existing_cards = service.calls[-1]["existing_cards"]
+        self.assertEqual(
+            existing_cards,
+            [
+                {
+                    "cardId": "101",
+                    "noteId": "201",
+                    "deckId": "1",
+                    "front": "Capital of France?",
+                }
+            ],
+        )
 
     def test_generate_cards_accepts_agent_provider(self) -> None:
         service = FakeGenerationService()
@@ -660,6 +705,56 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertEqual(events[1][1]["part"], {"type": "text", "text": "draft cards"})
         self.assertEqual(service.calls[-1]["card_count_mode"], "normal")
         self.assertEqual(events[2][1]["result"]["cards"][0]["front"], "Front")
+
+    def test_start_generate_cards_accepts_target_deck_id(self) -> None:
+        service = FakeGenerationService()
+        collection = FakeCollection()
+        events: list[tuple[str, JsonObject]] = []
+
+        def run_immediately(
+            operation: Callable[[], JsonObject],
+            on_done: Callable[[JsonObject | BaseException], None],
+        ) -> None:
+            try:
+                outcome: JsonObject | BaseException = operation()
+            except BaseException as error:
+                outcome = error
+            on_done(outcome)
+
+        router = TransportRouter()
+        register_generation_transport_handlers(
+            router,
+            service,
+            collection_provider=lambda: collection,
+            background_runner=run_immediately,
+            event_emitter=lambda event, payload: events.append((event, payload)),
+        )
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.startGenerateCards",
+                {
+                    "sourceText": "Important facts",
+                    "targetDeckId": "1",
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(events[-1][1]["status"], "succeeded")
+        self.assertEqual(
+            service.calls[-1]["existing_cards"],
+            [
+                {
+                    "cardId": "101",
+                    "noteId": "201",
+                    "deckId": "1",
+                    "front": "Capital of France?",
+                }
+            ],
+        )
 
     def test_start_generate_cards_reports_event_unavailable_without_emitter(
         self,

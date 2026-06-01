@@ -54,6 +54,7 @@ class CardGenerationWorkflow(Protocol):
         card_count: int,
         card_count_mode: CardCountMode | None = None,
         instructions: str | None = None,
+        existing_card_index_available: bool = False,
     ) -> str:
         ...
 
@@ -79,6 +80,7 @@ class BaseCardGenerationWorkflow:
         card_count: int,
         card_count_mode: CardCountMode | None = None,
         instructions: str | None = None,
+        existing_card_index_available: bool = False,
     ) -> str:
         try:
             template = _prompt_environment().get_template(self.template_name)
@@ -92,6 +94,7 @@ class BaseCardGenerationWorkflow:
                         if instructions is not None and instructions.strip()
                         else None
                     ),
+                    existing_card_index_available=existing_card_index_available,
                 )
             )
         except Exception as error:

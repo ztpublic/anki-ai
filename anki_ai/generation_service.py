@@ -46,6 +46,13 @@ class MaterialInput(TypedDict):
     contentBase64: str
 
 
+class ExistingCardInput(TypedDict):
+    cardId: str
+    noteId: str
+    deckId: str
+    front: str
+
+
 class GenerationRunInfo(TypedDict, total=False):
     workspacePath: str
     sessionId: str
@@ -185,6 +192,75 @@ GENERATION_HARNESS_CONFIG_KEYS = (
     "noProxy",
 )
 
+EXISTING_CARD_SEARCH_SCRIPT = '''#!/usr/bin/env python3
+from __future__ import annotations
+
+import difflib
+import json
+import re
+import sys
+from pathlib import Path
+
+
+def normalize(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value)
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\\s+", " ", text).strip()
+
+
+def load_cards(index_path: Path) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    if not index_path.is_file():
+        return cards
+    for line in index_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        if isinstance(item, dict):
+            cards.append({str(key): str(value) for key, value in item.items()})
+    return cards
+
+
+def score_query(query: str, front: str) -> float:
+    if not query or not front:
+        return 0.0
+    query_tokens = set(query.split())
+    front_tokens = set(front.split())
+    overlap = len(query_tokens & front_tokens) / max(len(query_tokens), 1)
+    reverse_overlap = len(query_tokens & front_tokens) / max(len(front_tokens), 1)
+    fuzzy = difflib.SequenceMatcher(None, query, front).ratio()
+    phrase = 1.0 if query in front or front in query else 0.0
+    return max(phrase, (overlap * 0.45) + (reverse_overlap * 0.25) + (fuzzy * 0.30))
+
+
+def main() -> int:
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        print("[]")
+        return 0
+    query = normalize(" ".join(sys.argv[1:]))
+    index_path = Path(__file__).with_name("index.jsonl")
+    matches = []
+    for card in load_cards(index_path):
+        score = score_query(query, card.get("normalizedFront", ""))
+        if score <= 0:
+            continue
+        matches.append(
+            {
+                "score": round(score, 4),
+                "cardId": card.get("cardId", ""),
+                "front": card.get("front", ""),
+            }
+        )
+    matches.sort(key=lambda item: item["score"], reverse=True)
+    print(json.dumps(matches[:10], ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
 
 def _default_workspace_factory() -> Path:
     return Path(tempfile.mkdtemp(prefix="anki-ai-generation-"))
@@ -222,6 +298,7 @@ class AgentCardGenerationService:
         card_type: str = DEFAULT_CARD_TYPE_ID,
         agent_provider: AgentProvider | str | None = None,
         instructions: str | None = None,
+        existing_cards: Sequence[ExistingCardInput] | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
         has_source_text = source_text is not None and bool(source_text.strip())
@@ -337,12 +414,21 @@ class AgentCardGenerationService:
                 ),
             )
 
+        existing_card_index_available = False
+        if existing_cards is not None:
+            existing_card_index_available = True
+            self._write_existing_card_index(
+                workspace_path=workspace_path,
+                existing_cards=existing_cards,
+            )
+
         prompt = self._build_prompt(
             material_names=material_names,
             card_count=normalized_card_count,
             card_count_mode=normalized_card_count_mode,
             card_type_id=card_type_id,
             instructions=instructions,
+            existing_card_index_available=existing_card_index_available,
         )
 
         run_info: GenerationRunInfo = {"workspacePath": str(workspace_path)}
@@ -605,6 +691,7 @@ class AgentCardGenerationService:
         card_count_mode: CardCountMode | None = None,
         card_type_id: str = DEFAULT_CARD_TYPE_ID,
         instructions: str | None = None,
+        existing_card_index_available: bool = False,
     ) -> str:
         try:
             return get_generation_workflow(card_type_id).build_prompt(
@@ -612,9 +699,63 @@ class AgentCardGenerationService:
                 card_count=card_count,
                 card_count_mode=card_count_mode,
                 instructions=instructions,
+                existing_card_index_available=existing_card_index_available,
             )
         except CardGenerationWorkflowError as error:
             raise GenerationServiceError(error.code, error.message, error.details) from error
+
+    def _write_existing_card_index(
+        self,
+        *,
+        workspace_path: Path,
+        existing_cards: Sequence[ExistingCardInput],
+    ) -> None:
+        existing_cards_dir = workspace_path / "existing_cards"
+        existing_cards_dir.mkdir(exist_ok=True)
+        index_path = existing_cards_dir / "index.jsonl"
+
+        with index_path.open("w", encoding="utf-8") as index_file:
+            for card in existing_cards:
+                front = self._coerce_text(card.get("front")).strip()
+                if not front:
+                    continue
+                record = {
+                    "cardId": self._coerce_text(card.get("cardId")),
+                    "noteId": self._coerce_text(card.get("noteId")),
+                    "deckId": self._coerce_text(card.get("deckId")),
+                    "front": front,
+                    "normalizedFront": self._normalize_existing_card_front(front),
+                }
+                index_file.write(
+                    json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+                )
+
+        (existing_cards_dir / "README.md").write_text(
+            (
+                "# Existing target deck cards\n\n"
+                "This directory contains a front-only index of cards already in "
+                "the selected target deck. Use `search_existing_cards.py` to check "
+                "whether candidate card fronts duplicate existing recall prompts.\n"
+            ),
+            encoding="utf-8",
+        )
+        (existing_cards_dir / "search_existing_cards.py").write_text(
+            EXISTING_CARD_SEARCH_SCRIPT,
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _normalize_existing_card_front(value: str) -> str:
+        text = re.sub(r"<[^>]+>", " ", value)
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _coerce_text(value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
     def _normalize_card_count_mode(
         self,
