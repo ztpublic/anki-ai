@@ -642,6 +642,7 @@ def _optional_material_inputs(params: JsonObject, key: str) -> list[MaterialInpu
 
         name = item.get("name")
         content_base64 = item.get("contentBase64")
+        relative_path = item.get("relativePath")
         if not isinstance(name, str) or not name.strip():
             raise TransportError(
                 "invalid_params",
@@ -652,7 +653,20 @@ def _optional_material_inputs(params: JsonObject, key: str) -> list[MaterialInpu
                 "invalid_params",
                 f"{key}[{index}].contentBase64 must be a string.",
             )
+        if relative_path is not None and (
+            not isinstance(relative_path, str) or not relative_path.strip()
+        ):
+            raise TransportError(
+                "invalid_params",
+                (
+                    f"{key}[{index}].relativePath must be a non-empty string "
+                    "when provided."
+                ),
+            )
 
-        materials.append({"name": name, "contentBase64": content_base64})
+        material: MaterialInput = {"name": name, "contentBase64": content_base64}
+        if isinstance(relative_path, str):
+            material["relativePath"] = relative_path
+        materials.append(material)
 
     return materials

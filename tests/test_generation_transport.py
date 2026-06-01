@@ -154,6 +154,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                         {
                             "name": "notes.md",
                             "contentBase64": "aGVsbG8=",
+                            "relativePath": "course/week 1/notes.md",
                         }
                     ],
                 },
@@ -169,7 +170,13 @@ class GenerationTransportHandlersTest(unittest.TestCase):
             [
                 {
                     "source_text": "Important facts",
-                    "materials": [{"name": "notes.md", "contentBase64": "aGVsbG8="}],
+                    "materials": [
+                        {
+                            "name": "notes.md",
+                            "contentBase64": "aGVsbG8=",
+                            "relativePath": "course/week 1/notes.md",
+                        }
+                    ],
                     "card_count": 7,
                     "card_count_mode": None,
                     "card_type": "basic",

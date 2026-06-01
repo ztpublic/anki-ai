@@ -12,7 +12,7 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, TypedDict, cast
 
 from .card_generation_workflows import (
@@ -41,9 +41,10 @@ from .file_conversion_service import (
 )
 
 
-class MaterialInput(TypedDict):
+class MaterialInput(TypedDict, total=False):
     name: str
     contentBase64: str
+    relativePath: str
 
 
 class ExistingCardInput(TypedDict):
@@ -327,6 +328,7 @@ class AgentCardGenerationService:
 
         material_names: list[str] = []
         used_names: set[str] = set()
+        used_paths: set[str] = set()
         if has_source_text and source_text is not None:
             source_path = materials_dir / self._unique_material_name(
                 "user_input.txt",
@@ -334,9 +336,16 @@ class AgentCardGenerationService:
             )
             source_path.write_text(source_text, encoding="utf-8")
             material_names.append(source_path.name)
+            used_paths.add(source_path.name)
 
         for index, material in enumerate(materials):
             filename = self._sanitize_material_filename(material, index=index)
+            is_folder_material = bool(material.get("relativePath", "").strip())
+            relative_path = self._material_relative_path(
+                material,
+                index=index,
+                used_paths=used_paths,
+            )
             try:
                 content = base64.b64decode(material["contentBase64"], validate=True)
             except (ValueError, TypeError) as error:
@@ -347,13 +356,17 @@ class AgentCardGenerationService:
                 ) from error
 
             if self._is_markdown_material(filename):
-                material_path = materials_dir / self._unique_material_name(
-                    filename,
-                    used_names=used_names,
-                )
-                material_path.write_bytes(content)
-                material_names.append(material_path.name)
+                raw_material_path = materials_dir / relative_path
+                raw_material_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_material_path.write_bytes(content)
+                material_names.append(relative_path)
                 continue
+
+            raw_material_path: Path | None = None
+            if is_folder_material:
+                raw_material_path = materials_dir / relative_path
+                raw_material_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_material_path.write_bytes(content)
 
             self._log(
                 log_sink,
@@ -361,7 +374,12 @@ class AgentCardGenerationService:
             )
 
             try:
-                converted = self._material_converter.convert_file(file=material)
+                converted = self._material_converter.convert_file(
+                    file={
+                        "name": material["name"],
+                        "contentBase64": material["contentBase64"],
+                    }
+                )
             except FileConversionServiceError as error:
                 self._log(
                     log_sink,
@@ -370,6 +388,8 @@ class AgentCardGenerationService:
                 fallback_name = self._write_raw_text_material_if_supported(
                     filename=filename,
                     content=content,
+                    material_path=raw_material_path,
+                    display_name=relative_path,
                     materials_dir=materials_dir,
                     used_names=used_names,
                 )
@@ -399,13 +419,14 @@ class AgentCardGenerationService:
                 ) from error
 
             markdown = converted["document"]["markdown"]
-            converted_name = self._unique_material_name(
-                self._converted_markdown_filename(filename),
-                used_names=used_names,
+            converted_name = self._converted_material_path(
+                relative_path,
+                used_paths=used_paths,
             )
             material_path = materials_dir / converted_name
+            material_path.parent.mkdir(parents=True, exist_ok=True)
             material_path.write_text(markdown, encoding="utf-8")
-            material_names.append(material_path.name)
+            material_names.append(converted_name)
             self._log(
                 log_sink,
                 (
@@ -802,6 +823,37 @@ class AgentCardGenerationService:
 
         return sanitized
 
+    def _material_relative_path(
+        self,
+        material: MaterialInput,
+        *,
+        index: int,
+        used_paths: set[str],
+    ) -> str:
+        raw_relative_path = material.get("relativePath", "").strip()
+        if raw_relative_path:
+            sanitized = self._sanitize_material_relative_path(raw_relative_path)
+        else:
+            sanitized = self._sanitize_material_filename(material, index=index)
+
+        return self._unique_material_path(sanitized, used_paths=used_paths)
+
+    @staticmethod
+    def _sanitize_material_relative_path(raw_path: str) -> str:
+        path = PurePosixPath(raw_path.replace("\\", "/"))
+        sanitized_parts: list[str] = []
+        for part in path.parts:
+            if part in {"", ".", "..", "/"}:
+                continue
+            sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", part).lstrip(".")
+            if sanitized:
+                sanitized_parts.append(sanitized)
+
+        if not sanitized_parts:
+            return "material.bin"
+
+        return PurePosixPath(*sanitized_parts).as_posix()
+
     def _material_filename(
         self,
         material: MaterialInput,
@@ -823,12 +875,25 @@ class AgentCardGenerationService:
             stem = "material"
         return f"{stem}.md"
 
+    def _converted_material_path(
+        self,
+        relative_path: str,
+        *,
+        used_paths: set[str],
+    ) -> str:
+        path = PurePosixPath(relative_path)
+        stem = path.stem or "material"
+        converted = path.with_name(f"{stem}.md")
+        return self._unique_material_path(converted.as_posix(), used_paths=used_paths)
+
     @classmethod
     def _write_raw_text_material_if_supported(
         cls,
         *,
         filename: str,
         content: bytes,
+        material_path: Path | None,
+        display_name: str,
         materials_dir: Path,
         used_names: set[str],
     ) -> str | None:
@@ -836,15 +901,24 @@ class AgentCardGenerationService:
             return None
 
         try:
-            text = content.decode("utf-8-sig")
+            text = (
+                material_path.read_text(encoding="utf-8-sig")
+                if material_path is not None
+                else content.decode("utf-8-sig")
+            )
         except UnicodeDecodeError:
             return None
 
         if "\x00" in text or not text.strip():
             return None
 
-        fallback_name = cls._unique_material_name(filename, used_names=used_names)
-        (materials_dir / fallback_name).write_text(text, encoding="utf-8")
+        fallback_name = cls._unique_material_name(
+            PurePosixPath(display_name).name,
+            used_names=used_names,
+        )
+        fallback_path = materials_dir / fallback_name
+        if material_path is None or fallback_path != material_path:
+            fallback_path.write_text(text, encoding="utf-8")
         return fallback_name
 
     @staticmethod
@@ -861,6 +935,25 @@ class AgentCardGenerationService:
             candidate = f"{stem}-{counter}{suffix}"
             counter += 1
         used_names.add(candidate)
+        return candidate
+
+    @staticmethod
+    def _unique_material_path(path: str, *, used_paths: set[str]) -> str:
+        candidate = path
+        posix_path = PurePosixPath(path)
+        parent = posix_path.parent
+        stem = posix_path.stem or "material"
+        suffix = posix_path.suffix
+        counter = 2
+        while candidate in used_paths:
+            filename = f"{stem}-{counter}{suffix}"
+            candidate = (
+                filename
+                if parent.as_posix() == "."
+                else (parent / filename).as_posix()
+            )
+            counter += 1
+        used_paths.add(candidate)
         return candidate
 
     @staticmethod

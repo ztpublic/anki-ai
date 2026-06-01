@@ -30,11 +30,19 @@ from anki_ai.generation_service import (
 )
 
 
-def material_payload(name: str, content: bytes) -> dict[str, str]:
-    return {
+def material_payload(
+    name: str,
+    content: bytes,
+    *,
+    relative_path: str | None = None,
+) -> dict[str, str]:
+    payload = {
         "name": name,
         "contentBase64": base64.b64encode(content).decode("ascii"),
     }
+    if relative_path is not None:
+        payload["relativePath"] = relative_path
+    return payload
 
 
 def log_messages(logs: list[GenerationLogEvent]) -> list[str]:
@@ -469,6 +477,63 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
             ],
         )
         self.assertEqual(logs, [])
+
+    def test_generate_cards_preserves_folder_material_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FakeMaterialConverter:
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    assert file["name"] == "lecture.pdf"
+                    return {"document": {"markdown": "# Lecture\n"}}
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("- course/week_1/notes.md", prompt)
+                self.assertIn("- course/week_1/lecture.md", prompt)
+                self.assertEqual(
+                    (
+                        workspace / "materials" / "course" / "week_1" / "notes.md"
+                    ).read_bytes(),
+                    b"# Notes\n",
+                )
+                self.assertEqual(
+                    (
+                        workspace / "materials" / "course" / "week_1" / "lecture.pdf"
+                    ).read_bytes(),
+                    b"%PDF-1.4\n",
+                )
+                self.assertEqual(
+                    (
+                        workspace / "materials" / "course" / "week_1" / "lecture.md"
+                    ).read_text(encoding="utf-8"),
+                    "# Lecture\n",
+                )
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+                material_converter=FakeMaterialConverter(),
+            )
+
+            service.generate_cards(
+                materials=[
+                    material_payload(
+                        "notes.md",
+                        b"# Notes\n",
+                        relative_path="course/week 1/notes.md",
+                    ),
+                    material_payload(
+                        "lecture.pdf",
+                        b"%PDF-1.4\n",
+                        relative_path="course/week 1/lecture.pdf",
+                    ),
+                ],
+            )
 
     def test_generate_cards_surfaces_material_conversion_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

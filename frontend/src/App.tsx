@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FolderOpen,
   FileText,
   Info,
   Library,
@@ -82,6 +83,7 @@ type DeckListResponse = {
 type GenerationMaterialPayload = {
   name: string;
   contentBase64: string;
+  relativePath?: string;
 };
 
 type GenerateCardsResponse = {
@@ -587,6 +589,10 @@ function fileExtension(fileName: string): string {
 
 function isSupportedAttachmentFile(file: File): boolean {
   return SUPPORTED_ATTACHMENT_EXTENSION_SET.has(fileExtension(file.name));
+}
+
+function fileDisplayPath(file: File): string {
+  return file.webkitRelativePath || file.name;
 }
 
 function traceMessageMetadata(message: AgentTraceMessage) {
@@ -1248,6 +1254,7 @@ export function App() {
     useState<MarkdownPreviewState | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const activeGenerationJobIdRef = useRef<string | null>(null);
   const activeRegenerationJobIdRef = useRef<string | null>(null);
   const acceptsGenerationEventsRef = useRef(false);
@@ -1628,7 +1635,7 @@ export function App() {
     }
 
     if (unsupportedFiles.length > 0) {
-      const names = unsupportedFiles.map((file) => file.name).join(", ");
+      const names = unsupportedFiles.map(fileDisplayPath).join(", ");
       setGenerationError(
         `Unsupported file type: ${names}\nSupported files: ${SUPPORTED_ATTACHMENT_SUMMARY}.`,
       );
@@ -1715,6 +1722,9 @@ export function App() {
       const materials = await Promise.all<GenerationMaterialPayload>(
         files.map(async (file) => ({
           name: file.name,
+          ...(file.webkitRelativePath
+            ? { relativePath: file.webkitRelativePath }
+            : {}),
           contentBase64: await fileToBase64(file),
         })),
       );
@@ -2194,22 +2204,36 @@ export function App() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-zinc-600">
-                Source Files
-              </label>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="group flex w-full flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white p-3 text-center transition-all hover:border-indigo-300 hover:bg-indigo-50/40"
-              >
-                <UploadCloud className="mb-2 h-5 w-5 text-zinc-400 transition-colors group-hover:text-indigo-500" />
-                <span className="text-sm font-medium text-zinc-700">
-                  Click to upload source documents
-                </span>
-                <span className="mt-0.5 text-xs text-zinc-500">
+              <div className="flex items-center justify-between gap-3">
+                <label className="block text-xs font-semibold text-zinc-600">
+                  Source Files
+                </label>
+                <span className="truncate text-xs text-zinc-500">
                   {SUPPORTED_ATTACHMENT_SUMMARY}
                 </span>
-              </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="group flex min-h-20 flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white p-3 text-center transition-all hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <UploadCloud className="mb-2 h-5 w-5 text-zinc-400 transition-colors group-hover:text-indigo-500" />
+                  <span className="text-sm font-medium text-zinc-700">
+                    Attach files
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => folderInputRef.current?.click()}
+                  className="group flex min-h-20 flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white p-3 text-center transition-all hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <FolderOpen className="mb-2 h-5 w-5 text-zinc-400 transition-colors group-hover:text-indigo-500" />
+                  <span className="text-sm font-medium text-zinc-700">
+                    Attach folder
+                  </span>
+                </button>
+              </div>
               <input
                 type="file"
                 ref={fileInputRef}
@@ -2217,6 +2241,15 @@ export function App() {
                 className="hidden"
                 multiple
                 accept={SUPPORTED_ATTACHMENT_ACCEPT}
+              />
+              <input
+                type="file"
+                ref={folderInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+                multiple
+                accept={SUPPORTED_ATTACHMENT_ACCEPT}
+                {...{ webkitdirectory: "" }}
               />
 
               {files.length > 0 ? (
@@ -2229,7 +2262,7 @@ export function App() {
                       <div className="flex min-w-0 items-center gap-2">
                         <FileText className="h-4 w-4 flex-shrink-0 text-zinc-400" />
                         <span className="truncate text-zinc-700">
-                          {file.name}
+                            {fileDisplayPath(file)}
                         </span>
                       </div>
                       <button
