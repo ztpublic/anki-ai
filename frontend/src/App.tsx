@@ -291,6 +291,7 @@ const DEFAULT_CARD_TYPE_ID: CardTypeId = "basic";
 const DEFAULT_CARD_COUNT = 5;
 const DEFAULT_CARD_COUNT_STRATEGY: CardCountStrategy = "fixed";
 const DEFAULT_CARD_COUNT_MODE: CardCountMode = "normal";
+const DEFAULT_AUTO_CONVERT_MATERIALS = true;
 const DEFAULT_AGENT_PROVIDER: AgentProvider = "claude";
 const DEFAULT_CODEX_AUTH_MODE: CodexAuthMode = "local";
 const DEFAULT_GENERATION_HARNESS_CONFIG: GenerationHarnessConfig = {
@@ -1218,6 +1219,9 @@ export function App() {
   const [cardCountMode, setCardCountMode] = useState<CardCountMode>(
     DEFAULT_CARD_COUNT_MODE,
   );
+  const [autoConvertMaterials, setAutoConvertMaterials] = useState(
+    DEFAULT_AUTO_CONVERT_MATERIALS,
+  );
   const [generationHarnessConfig, setGenerationHarnessConfig] =
     useState<GenerationHarnessConfig>(DEFAULT_GENERATION_HARNESS_CONFIG);
   const [draftGenerationHarnessConfig, setDraftGenerationHarnessConfig] =
@@ -1737,6 +1741,7 @@ export function App() {
           ...(cardCountStrategy === "fixed" ? { cardCount } : { cardCountMode }),
           cardType: selectedCardTypeId,
           agentProvider: generationHarnessConfig.agentProvider,
+          autoConvertMaterials,
           ...(selectedDeck !== null ? { targetDeckId: selectedDeck.id } : {}),
           materials,
         },
@@ -2262,7 +2267,7 @@ export function App() {
                       <div className="flex min-w-0 items-center gap-2">
                         <FileText className="h-4 w-4 flex-shrink-0 text-zinc-400" />
                         <span className="truncate text-zinc-700">
-                            {fileDisplayPath(file)}
+                          {fileDisplayPath(file)}
                         </span>
                       </div>
                       <button
@@ -2277,6 +2282,17 @@ export function App() {
                   ))}
                 </div>
               ) : null}
+              <label className="mt-2 flex h-8 items-center gap-2 rounded-md border border-zinc-300 bg-white px-2.5 text-sm font-medium text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={autoConvertMaterials}
+                  onChange={(event) =>
+                    setAutoConvertMaterials(event.target.checked)
+                  }
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                <span>Auto-convert files</span>
+              </label>
             </div>
 
             <div className="space-y-1.5">

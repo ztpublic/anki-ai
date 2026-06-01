@@ -535,6 +535,43 @@ class ClaudeCardGenerationServiceTest(unittest.TestCase):
                 ],
             )
 
+    def test_generate_cards_can_skip_non_markdown_material_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_path = Path(temp_dir) / "workspace"
+
+            class FailingMaterialConverter:
+                def convert_file(self, *, file: dict[str, str]) -> dict[str, object]:
+                    _ = file
+                    raise AssertionError("material conversion should be skipped")
+
+            def runner(prompt: str, workspace: Path) -> dict[str, str]:
+                self.assertIn("- lecture.pdf", prompt)
+                self.assertEqual(
+                    (workspace / "materials" / "lecture.pdf").read_bytes(),
+                    b"%PDF-1.4\n",
+                )
+                self.assertFalse((workspace / "materials" / "lecture.md").exists())
+                (workspace / "cards.json").write_text(
+                    json.dumps([{"Front": "Question", "Back": "Answer"}]),
+                    encoding="utf-8",
+                )
+                return {}
+
+            service = ClaudeCardGenerationService(
+                runner=runner,
+                workspace_factory=lambda: workspace_path,
+                material_converter=FailingMaterialConverter(),
+            )
+            logs: list[GenerationLogEvent] = []
+
+            service.generate_cards(
+                materials=[material_payload("lecture.pdf", b"%PDF-1.4\n")],
+                auto_convert_materials=False,
+                log_sink=logs.append,
+            )
+
+        self.assertEqual(logs, [])
+
     def test_generate_cards_surfaces_material_conversion_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace_path = Path(temp_dir) / "workspace"

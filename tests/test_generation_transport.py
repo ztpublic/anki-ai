@@ -42,6 +42,7 @@ class FakeGenerationService:
         card_type: str = "basic",
         agent_provider: str | None = None,
         instructions: str | None = None,
+        auto_convert_materials: bool = True,
         existing_cards: list[dict[str, str]] | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
@@ -64,6 +65,7 @@ class FakeGenerationService:
                 "card_type": card_type,
                 "agent_provider": agent_provider,
                 "instructions": instructions,
+                "auto_convert_materials": auto_convert_materials,
                 "existing_cards": existing_cards,
             }
         )
@@ -115,6 +117,7 @@ class RateLimitedGenerationService:
         card_type: str = "basic",
         agent_provider: str | None = None,
         instructions: str | None = None,
+        auto_convert_materials: bool = True,
         existing_cards: list[dict[str, str]] | None = None,
         log_sink: Callable[[GenerationLogEvent], None] | None = None,
     ) -> JsonObject:
@@ -125,6 +128,7 @@ class RateLimitedGenerationService:
         _ = card_type
         _ = agent_provider
         _ = instructions
+        _ = auto_convert_materials
         _ = existing_cards
         _ = log_sink
         raise GenerationServiceError(
@@ -182,6 +186,7 @@ class GenerationTransportHandlersTest(unittest.TestCase):
                     "card_type": "basic",
                     "agent_provider": None,
                     "instructions": "Only generate yes/no questions.",
+                    "auto_convert_materials": True,
                     "existing_cards": None,
                 }
             ],
@@ -208,6 +213,26 @@ class GenerationTransportHandlersTest(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(service.calls[-1]["card_count"], 12)
         self.assertEqual(service.calls[-1]["card_count_mode"], "more")
+
+    def test_generate_cards_accepts_auto_convert_materials(self) -> None:
+        service = FakeGenerationService()
+        router = TransportRouter()
+        register_generation_transport_handlers(router, service)
+
+        response = router.handle_raw_message(
+            request_message(
+                "anki.generation.generateCards",
+                {
+                    "sourceText": "Important facts",
+                    "autoConvertMaterials": False,
+                },
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertTrue(response["ok"])
+        self.assertEqual(service.calls[-1]["auto_convert_materials"], False)
 
     def test_generate_cards_passes_front_only_existing_cards_for_target_deck(
         self,

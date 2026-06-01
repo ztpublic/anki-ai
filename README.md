@@ -216,10 +216,12 @@ generated cards.
 
 Card generation runs in a temporary workspace. The backend prepares a
 `materials/` directory, preserves folder-upload paths under that directory,
-copies markdown attachments into place, converts non-markdown attachments to
-markdown files alongside the prepared materials, runs the configured agent with
-that workspace as the current directory, and expects a single `cards.json` file
-in the workspace root.
+copies markdown attachments into place, and optionally converts non-markdown
+attachments to markdown files alongside the prepared materials. It then runs the
+configured agent with that workspace as the current directory and expects a
+single `cards.json` file in the workspace root. The UI enables automatic
+conversion by default; API callers can set `autoConvertMaterials` to `false` to
+copy raw material files into `materials/` without conversion.
 The app's instruction input is injected into the prompt as generation guidance;
 it is not written to `materials/` and is not treated as source material.
 The bridge still accepts `sourceText` for API callers; when present, it is

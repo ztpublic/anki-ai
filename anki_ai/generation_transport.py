@@ -107,6 +107,7 @@ class GenerationTransportHandlers:
             card_count_mode,
             card_type,
             instructions,
+            auto_convert_materials,
             target_deck_id,
         ) = self._generation_inputs(params)
         agent_provider = _optional_agent_provider(params, "agentProvider")
@@ -121,6 +122,7 @@ class GenerationTransportHandlers:
                 card_type=card_type,
                 agent_provider=agent_provider,
                 instructions=instructions,
+                auto_convert_materials=auto_convert_materials,
                 existing_cards=existing_cards,
             )
         )
@@ -214,6 +216,7 @@ class GenerationTransportHandlers:
             card_count_mode,
             card_type,
             instructions,
+            auto_convert_materials,
             target_deck_id,
         ) = self._generation_inputs(params)
         agent_provider = _optional_agent_provider(params, "agentProvider")
@@ -276,6 +279,7 @@ class GenerationTransportHandlers:
                 card_type=card_type,
                 agent_provider=agent_provider,
                 instructions=instructions,
+                auto_convert_materials=auto_convert_materials,
                 existing_cards=existing_cards,
                 log_sink=log_sink,
             )
@@ -350,6 +354,7 @@ class GenerationTransportHandlers:
         CardCountMode | None,
         str,
         str | None,
+        bool,
         int | None,
     ]:
         source_text = _optional_string(params, "sourceText")
@@ -364,6 +369,11 @@ class GenerationTransportHandlers:
         card_count_mode = _optional_card_count_mode(params, "cardCountMode")
         card_type = _optional_card_type(params, "cardType")
         materials = _optional_material_inputs(params, "materials")
+        auto_convert_materials = _optional_bool(
+            params,
+            "autoConvertMaterials",
+            default=True,
+        )
         target_deck_id = _optional_id(params, "targetDeckId")
 
         if source_text is None and not materials:
@@ -382,6 +392,7 @@ class GenerationTransportHandlers:
             card_count_mode,
             card_type,
             instructions,
+            auto_convert_materials,
             target_deck_id,
         )
 
@@ -593,6 +604,16 @@ def _optional_int(
             f"{key} must be between {minimum} and {maximum}.",
         )
     return cast(int, value)
+
+
+def _optional_bool(params: JsonObject, key: str, *, default: bool) -> bool:
+    value = params.get(key, default)
+    if not isinstance(value, bool):
+        raise TransportError(
+            "invalid_params",
+            f"{key} must be a boolean.",
+        )
+    return value
 
 
 def _optional_id(params: JsonObject, key: str) -> int | None:

@@ -15,6 +15,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, TypedDict, cast
 
+try:
+    from typing import NotRequired
+except ImportError:  # pragma: no cover - Python 3.10 compatibility
+    from typing_extensions import NotRequired
+
 from .card_generation_workflows import (
     CardCountMode,
     CardGenerationWorkflowError,
@@ -41,10 +46,10 @@ from .file_conversion_service import (
 )
 
 
-class MaterialInput(TypedDict, total=False):
+class MaterialInput(TypedDict):
     name: str
     contentBase64: str
-    relativePath: str
+    relativePath: NotRequired[str]
 
 
 class ExistingCardInput(TypedDict):
@@ -299,6 +304,7 @@ class AgentCardGenerationService:
         card_type: str = DEFAULT_CARD_TYPE_ID,
         agent_provider: AgentProvider | str | None = None,
         instructions: str | None = None,
+        auto_convert_materials: bool = True,
         existing_cards: Sequence[ExistingCardInput] | None = None,
         log_sink: GenerationLogSink | None = None,
     ) -> GenerationResult:
@@ -363,10 +369,14 @@ class AgentCardGenerationService:
                 continue
 
             raw_material_path: Path | None = None
-            if is_folder_material:
+            if is_folder_material or not auto_convert_materials:
                 raw_material_path = materials_dir / relative_path
                 raw_material_path.parent.mkdir(parents=True, exist_ok=True)
                 raw_material_path.write_bytes(content)
+
+            if not auto_convert_materials:
+                material_names.append(relative_path)
+                continue
 
             self._log(
                 log_sink,
